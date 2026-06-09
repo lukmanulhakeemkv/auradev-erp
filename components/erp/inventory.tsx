@@ -1,0 +1,435 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import {
+  Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, useToast, useClickOutside,
+} from './ui'
+import { CATEGORIES, CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
+import {
+  fetchProducts, fetchCategories, createProduct, updateProduct, adjustStock,
+  type ProductFormData,
+} from '@/lib/inventory-api'
+
+const STATUS_BADGE = {
+  in:  { tone: 'success', label: 'In Stock' },
+  low: { tone: 'warning', label: 'Low Stock' },
+  out: { tone: 'danger',  label: 'Out of Stock' },
+} as const
+
+function RowMenu({ onEdit, onHistory, onAdjust }: { onEdit: () => void; onHistory: () => void; onAdjust: () => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useClickOutside(ref, () => setOpen(false), open)
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button className="icon-btn" style={{ width: 30, height: 30 }} onClick={e => { e.stopPropagation(); setOpen(v => !v) }}>
+        <Icon name="more-horizontal" size={17} />
+      </button>
+      {open && (
+        <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 184 }}>
+          <button className="menu-item" onClick={() => { setOpen(false); onAdjust() }}><Icon name="package-plus" size={16} className="lead" />Quick adjust stock</button>
+          <button className="menu-item" onClick={() => { setOpen(false); onHistory() }}><Icon name="history" size={16} className="lead" />Movement history</button>
+          <button className="menu-item" onClick={() => { setOpen(false); onEdit() }}><Icon name="pencil" size={16} className="lead" />Edit product</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AdjustModal({ product, onClose, onSave }: {
+  product: Product
+  onClose: () => void
+  onSave: (delta: number, reason: string, notes: string) => void
+}) {
+  const [type, setType] = useState('add')
+  const [qty, setQty] = useState('')
+  const [reason, setReason] = useState('grn')
+  const [notes, setNotes] = useState('')
+  const n = parseFloat(qty) || 0
+  const result = type === 'add' ? product.stock + n : Math.max(0, product.stock - n)
+
+  return (
+    <Modal title="Adjust stock" sub={`${product.name} · ${product.sku}`} icon="package-plus" onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" icon="check" disabled={n <= 0} onClick={() => onSave(type === 'add' ? n : -n, reason, notes)}>Save adjustment</Button>
+      </>}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <Segmented value={type} onChange={setType} options={[{ value: 'add', icon: 'plus', label: 'Add stock' }, { value: 'remove', icon: 'minus', label: 'Remove' }]} />
+        <Field label="Quantity" hint={`Current on hand: ${product.stock} ${product.unit}`}>
+          <TextInput type="number" value={qty} onChange={setQty} placeholder="0" icon="hash" autoFocus
+            suffix={<span className="muted" style={{ fontSize: 12, fontWeight: 600 }}>{product.unit}</span>} />
+        </Field>
+        <Field label="Reason">
+          <Select value={reason} onChange={setReason} options={[
+            { value: 'grn', label: 'Goods received (GRN)', icon: 'truck' },
+            { value: 'damage', label: 'Damage / wastage', icon: 'trash-2' },
+            { value: 'return', label: 'Customer return', icon: 'undo-2' },
+            { value: 'count', label: 'Stock count correction', icon: 'clipboard-check' },
+          ]} />
+        </Field>
+        <Field label="Notes" optional>
+          <div className="input" style={{ height: 'auto' }}>
+            <textarea className="bare" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional note for the audit log" />
+          </div>
+        </Field>
+        <div className="pay-summary">
+          <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}>
+            <span>New stock on hand</span><span className="tnum">{result} {product.unit}</span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => void }) {
+  const moves = [
+    { t: 'Sale', q: -2, by: 'Priya N.', d: 'Today 6:48 PM', tone: 'danger' },
+    { t: 'GRN received', q: +40, by: 'Manoj R.', d: 'Today 2:10 PM', tone: 'success' },
+    { t: 'Sale', q: -6, by: 'Deepa S.', d: 'Today 11:20 AM', tone: 'danger' },
+    { t: 'Stock count', q: +3, by: 'Kiran B.', d: 'Yesterday 8:00 PM', tone: 'info' },
+    { t: 'Sale', q: -4, by: 'Priya N.', d: 'Yesterday 5:32 PM', tone: 'danger' },
+    { t: 'Damage', q: -1, by: 'Manoj R.', d: 'Yesterday 1:05 PM', tone: 'warning' },
+    { t: 'GRN received', q: +60, by: 'Manoj R.', d: '28 May 7:51 PM', tone: 'success' },
+  ]
+  return (
+    <Drawer title="Movement history" sub={`${product.name} · ${product.sku}`} onClose={onClose}>
+      <div className="row gap12" style={{ marginBottom: 16 }}>
+        <div className="kpi" style={{ flex: 1, padding: 12 }}>
+          <div className="kpi-label">On hand</div>
+          <div className="kpi-val tnum" style={{ fontSize: 22 }}>{product.stock} <span style={{ fontSize: 13, color: 'var(--fg-subtle)' }}>{product.unit}</span></div>
+        </div>
+        <div className="kpi" style={{ flex: 1, padding: 12 }}>
+          <div className="kpi-label">Reorder at</div>
+          <div className="kpi-val tnum" style={{ fontSize: 22 }}>{product.reorder}</div>
+        </div>
+      </div>
+      {moves.map((m, i) => (
+        <div key={i} className="row gap10" style={{ padding: '10px 0', borderBottom: i < moves.length - 1 ? '1px solid var(--border)' : 0 }}>
+          <IconTile tone={`tile-${m.tone}`} size={30} icon={m.q > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{m.t}</div>
+            <div className="td-sub">{m.by} · {m.d}</div>
+          </div>
+          <span className="tnum" style={{ fontWeight: 700, color: m.q > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
+            {m.q > 0 ? '+' : ''}{m.q}
+          </span>
+        </div>
+      ))}
+    </Drawer>
+  )
+}
+
+function ProductModal({ onClose, onSave, categories, initialProduct }: {
+  onClose: () => void
+  onSave: (f: ProductFormData) => void
+  categories: string[]
+  initialProduct?: Product
+}) {
+  const defaultCat = categories[0] ?? 'Grains'
+  const [f, setF] = useState<ProductFormData>({
+    name: initialProduct?.name ?? '',
+    sku: initialProduct?.sku ?? '',
+    barcode: initialProduct?.barcode === '—' ? '' : (initialProduct?.barcode ?? ''),
+    cat: initialProduct?.cat ?? defaultCat,
+    unit: initialProduct?.unit ?? 'pcs',
+    mrp: initialProduct ? String(initialProduct.mrp) : '',
+    price: initialProduct ? String(initialProduct.price) : '',
+    cost: initialProduct ? String(initialProduct.cost) : '',
+    tax: initialProduct ? String(initialProduct.tax) : '5',
+    reorder: initialProduct ? String(initialProduct.reorder) : '',
+    stock: initialProduct ? String(initialProduct.stock) : '',
+  })
+  const [tried, setTried] = useState(false)
+  const set = (k: keyof ProductFormData) => (v: string) => setF(s => ({ ...s, [k]: v }))
+  const err = (k: keyof ProductFormData) => tried && !String(f[k]).trim() ? 'Required' : null
+  const valid = f.name.trim() && f.sku.trim() && f.price && f.mrp
+  const isEdit = Boolean(initialProduct)
+
+  return (
+    <Modal
+      title={isEdit ? 'Edit product' : 'Add product'}
+      sub={isEdit ? `${initialProduct!.sku} · ${initialProduct!.id}` : 'Create a new catalogue item'}
+      icon={isEdit ? 'pencil' : 'plus'}
+      iconTone="tile-primary"
+      wide
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" icon="check" onClick={() => { setTried(true); if (valid) onSave(f) }}>
+          {isEdit ? 'Save changes' : 'Create product'}
+        </Button>
+      </>}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Product name" required error={err('name')}><TextInput value={f.name} onChange={set('name')} placeholder="e.g. Sona Masoori Rice" error={Boolean(err('name'))} /></Field>
+        </div>
+        <Field label="SKU" required error={err('sku')}><TextInput value={f.sku} onChange={set('sku')} placeholder="GRN-RICE-25" error={Boolean(err('sku'))} /></Field>
+        <Field label="Barcode" optional><TextInput value={f.barcode} onChange={set('barcode')} placeholder="8901234500000" /></Field>
+        <Field label="Category"><Select value={f.cat} onChange={set('cat')} options={categories.map(c => ({ value: c, label: c }))} /></Field>
+        <Field label="Unit type"><Select value={f.unit} onChange={set('unit')} options={[{ value: 'pcs', label: 'Unit (pcs / packet)' }, { value: 'kg', label: 'Weight (kg)' }]} /></Field>
+        <Field label="MRP (₹)" required error={err('mrp')}><TextInput type="number" value={f.mrp} onChange={set('mrp')} placeholder="0" error={Boolean(err('mrp'))} /></Field>
+        <Field label="Selling price (₹)" required error={err('price')}><TextInput type="number" value={f.price} onChange={set('price')} placeholder="0" error={Boolean(err('price'))} /></Field>
+        <Field label="Cost price (₹)" optional><TextInput type="number" value={f.cost} onChange={set('cost')} placeholder="0" /></Field>
+        <Field label="GST rate"><Select value={f.tax} onChange={set('tax')} options={['0', '5', '12', '18'].map(t => ({ value: t, label: t + '%' }))} /></Field>
+        <Field label="Reorder level"><TextInput type="number" value={f.reorder} onChange={set('reorder')} placeholder="0" /></Field>
+        {!isEdit && <Field label="Initial stock"><TextInput type="number" value={f.stock} onChange={set('stock')} placeholder="0" /></Field>}
+      </div>
+    </Modal>
+  )
+}
+
+export function Inventory() {
+  const toast = useToast()
+  const [products, setProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<string[]>(CATEGORIES)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [cat, setCat] = useState('all')
+  const [unit, setUnit] = useState('all')
+  const [status, setStatus] = useState('all')
+  const [sort, setSort] = useState<{ key: keyof Product; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' })
+  const [page, setPage] = useState(0)
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [adjust, setAdjust] = useState<Product | null>(null)
+  const [history, setHistory] = useState<Product | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [editProduct, setEditProduct] = useState<Product | null>(null)
+  const PER = 12
+
+  async function loadData() {
+    setLoading(true)
+    setError(null)
+    try {
+      const [prods, cats] = await Promise.all([fetchProducts(), fetchCategories()])
+      setProducts(prods)
+      if (cats.length > 0) setCategories(cats)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load products')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadData() }, [])
+
+  const lowCount = products.filter(p => stockStatus(p) !== 'in').length
+
+  let rows = products.filter(p => {
+    if (q && !(p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q))) return false
+    if (cat !== 'all' && p.cat !== cat) return false
+    if (unit !== 'all' && p.unit !== unit) return false
+    if (status !== 'all' && stockStatus(p) !== status) return false
+    return true
+  })
+  rows = [...rows].sort((a, b) => {
+    const av = a[sort.key], bv = b[sort.key]
+    if (typeof av === 'string' && typeof bv === 'string')
+      return av.toLowerCase().localeCompare(bv.toLowerCase()) * (sort.dir === 'asc' ? 1 : -1)
+    return ((av as number) < (bv as number) ? -1 : (av as number) > (bv as number) ? 1 : 0) * (sort.dir === 'asc' ? 1 : -1)
+  })
+
+  const pages = Math.max(1, Math.ceil(rows.length / PER))
+  const pageRows = rows.slice(page * PER, page * PER + PER)
+  useEffect(() => { if (page >= pages) setPage(0) }, [pages, page])
+
+  function toggleSort(key: keyof Product) {
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
+  }
+
+  function Th({ k, children, num }: { k: keyof Product; children: React.ReactNode; num?: boolean }) {
+    return (
+      <th className={`sortable${num ? ' num' : ''}`} onClick={() => toggleSort(k)}>
+        <span className="th-in">{children}{sort.key === k && <Icon name={sort.dir === 'asc' ? 'arrow-up' : 'arrow-down'} size={13} />}</span>
+      </th>
+    )
+  }
+
+  function toggleSel(id: string) {
+    setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  const allOn = pageRows.length > 0 && pageRows.every(p => sel.has(p.id))
+  function toggleAll() {
+    setSel(s => { const n = new Set(s); if (allOn) pageRows.forEach(p => n.delete(p.id)); else pageRows.forEach(p => n.add(p.id)); return n })
+  }
+
+  async function doAdjust(delta: number, reason: string, notes: string) {
+    if (!adjust) return
+    const target = adjust
+    setAdjust(null)
+    try {
+      const updated = await adjustStock(target.id, delta, reason, notes)
+      setProducts(ps => ps.map(p => p.id === updated.id ? updated : p))
+      toast(`${delta > 0 ? '+' : ''}${delta} ${target.unit} · ${target.name}`, { icon: 'package-check' })
+    } catch {
+      toast('Failed to adjust stock', { icon: 'alert-circle' })
+    }
+  }
+
+  async function doAddProduct(f: ProductFormData) {
+    try {
+      const p = await createProduct(f)
+      setProducts(ps => [p, ...ps])
+      setAddOpen(false)
+      toast('Product created · ' + f.name, { icon: 'package-check' })
+    } catch {
+      toast('Failed to create product', { icon: 'alert-circle' })
+    }
+  }
+
+  async function doUpdateProduct(f: ProductFormData) {
+    if (!editProduct) return
+    try {
+      const p = await updateProduct(editProduct.id, f)
+      setProducts(ps => ps.map(prod => prod.id === p.id ? p : prod))
+      setEditProduct(null)
+      toast('Product updated · ' + f.name, { icon: 'package-check' })
+    } catch {
+      toast('Failed to update product', { icon: 'alert-circle' })
+    }
+  }
+
+  return (
+    <div className="content-pad" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 1480, margin: '0 auto' }}>
+      <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div className="section-title">Inventory</div>
+          <div className="section-sub">{products.length} products · {categories.length} categories</div>
+        </div>
+        <div className="row gap8">
+          <Button size="sm" icon="download" onClick={() => toast(`Exported ${rows.length} rows to CSV`, { icon: 'file-down' })}>Export</Button>
+          <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>
+        </div>
+      </div>
+
+      {lowCount > 0 && (
+        <div className="alert-banner">
+          <Icon name="alert-triangle" size={18} />
+          <span><b>{lowCount} products</b> are at or below reorder level. Review and raise purchase orders to avoid stockouts.</span>
+          <div style={{ flex: 1 }} />
+          <button
+            className="chip"
+            style={{ background: 'transparent', borderColor: 'color-mix(in oklab, var(--warning) 40%, transparent)', color: 'var(--warning-fg)' }}
+            onClick={() => setStatus('low')}
+          >View low stock</button>
+        </div>
+      )}
+
+      <Card noBody>
+        <div style={{ padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+          <div className="input sm" style={{ width: 260 }}>
+            <Icon name="search" size={14} />
+            <input value={q} onChange={e => { setQ(e.target.value); setPage(0) }} placeholder="Search name, SKU or barcode" />
+          </div>
+          <Select size="sm" width={150} value={cat} onChange={v => { setCat(v); setPage(0) }}
+            options={[{ value: 'all', label: 'All categories' }, ...categories.map(c => ({ value: c, label: c }))]} />
+          <Select size="sm" width={140} value={unit} onChange={v => { setUnit(v); setPage(0) }}
+            options={[{ value: 'all', label: 'All units' }, { value: 'pcs', label: 'Unit-based' }, { value: 'kg', label: 'Weight-based' }]} />
+          <Select size="sm" width={150} value={status} onChange={v => { setStatus(v); setPage(0) }}
+            options={[{ value: 'all', label: 'All statuses' }, { value: 'in', label: 'In stock' }, { value: 'low', label: 'Low stock' }, { value: 'out', label: 'Out of stock' }]} />
+          <div style={{ flex: 1 }} />
+          {sel.size > 0 && (
+            <div className="row gap8">
+              <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{sel.size} selected</span>
+              <Button size="sm" variant="outline" icon="package-plus" onClick={() => toast(`Bulk adjust for ${sel.size} items`)}>Adjust</Button>
+              <Button size="sm" variant="outline" icon="download" onClick={() => toast(`Exported ${sel.size} rows`)}>Export</Button>
+            </div>
+          )}
+        </div>
+
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 38 }}><Checkbox checked={allOn} onChange={toggleAll} /></th>
+                <Th k="name">Product</Th>
+                <Th k="cat">Category</Th>
+                <th>Unit</th>
+                <Th k="mrp" num>MRP</Th>
+                <Th k="price" num>Price</Th>
+                <Th k="stock" num>Stock</Th>
+                <Th k="reorder" num>Reorder</Th>
+                <th>Status</th>
+                <th style={{ width: 44 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-subtle)' }}>
+                    <Icon name="loader" size={20} />
+                    <div style={{ marginTop: 8, fontSize: 13 }}>Loading products…</div>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0' }}>
+                    <div style={{ color: 'var(--danger-fg)', marginBottom: 10, fontSize: 13 }}>{error}</div>
+                    <Button size="sm" variant="outline" icon="refresh-cw" onClick={loadData}>Retry</Button>
+                  </td>
+                </tr>
+              ) : pageRows.length === 0 ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
+                    No products match your filters.
+                  </td>
+                </tr>
+              ) : pageRows.map(p => {
+                const st = stockStatus(p)
+                const sb = STATUS_BADGE[st]
+                return (
+                  <tr key={p.id} className={sel.has(p.id) ? 'selected' : ''}>
+                    <td><Checkbox checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} /></td>
+                    <td>
+                      <div className="row gap10">
+                        <IconTile tone={CAT_TONE[p.cat] ?? 'tile-primary'} size={30} icon={CAT_ICON[p.cat] ?? 'package'} />
+                        <div className="cell-stack">
+                          <span className="td-strong">{p.name}</span>
+                          <span className="td-sub mono">{p.sku} · {p.barcode}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td><Badge tone="neutral">{p.cat}</Badge></td>
+                    <td className="muted">{p.unit === 'kg' ? 'Weight (kg)' : 'Unit (pcs)'}</td>
+                    <td className="num tnum muted">{money(p.mrp)}</td>
+                    <td className="num tnum td-strong">{money(p.price)}</td>
+                    <td className="num tnum td-strong">{p.stock}</td>
+                    <td className="num tnum muted">{p.reorder}</td>
+                    <td><Badge tone={sb.tone} dot>{sb.label}</Badge></td>
+                    <td>
+                      <RowMenu
+                        onEdit={() => setEditProduct(p)}
+                        onHistory={() => setHistory(p)}
+                        onAdjust={() => setAdjust(p)}
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="row" style={{ justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            Showing {rows.length === 0 ? 0 : page * PER + 1}–{Math.min(rows.length, (page + 1) * PER)} of {rows.length}
+          </span>
+          <div className="row gap8">
+            <Button size="sm" variant="outline" icon="chevron-left" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Prev</Button>
+            <span className="muted" style={{ fontSize: 12.5, alignSelf: 'center' }}>{page + 1} / {pages}</span>
+            <Button size="sm" variant="outline" iconRight="chevron-right" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>Next</Button>
+          </div>
+        </div>
+      </Card>
+
+      {adjust && <AdjustModal product={adjust} onClose={() => setAdjust(null)} onSave={doAdjust} />}
+      {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
+      {addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
+      {editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}
+    </div>
+  )
+}

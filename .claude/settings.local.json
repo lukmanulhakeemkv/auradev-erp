@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(cp webfetch-1780422864771-rdjqxe.bin design.html.gz)",
+      "Bash(gunzip -f design.html.gz)",
+      "Bash(npx tsc *)",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --screenshot=/tmp/auradev-erp-home.png --window-size=1440,900 --no-sandbox --disable-gpu http://localhost:3000/)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --screenshot=/tmp/auradev-erp-inventory.png --window-size=1440,900 --no-sandbox --disable-gpu http://localhost:3000/inventory)",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --screenshot=/tmp/auradev-after-home.png --window-size=1440,900 --no-sandbox --disable-gpu http://localhost:3000/)",
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --screenshot=/tmp/run-dashboard.png --window-size=1440,900 --no-sandbox --disable-gpu http://localhost:3000/)",
+      "Bash(kill 18827)",
+      "Bash(npm run *)",
+      "Bash(echo \"New PID: $!\")",
+      "Bash(java --version)",
+      "Bash(mvn --version)",
+      "Read(//Users/m0hammedadhilameenkv/Desktop/Auradev/ERP/**)",
+      "Bash(/opt/homebrew/bin/brew --version)",
+      "Bash(/usr/local/bin/brew --version)",
+      "Bash(curl -s \"https://get.sdkman.io\")",
+      "Bash(bash)",
+      "Bash(xargs basename -a)",
+      "Bash(java -version)",
+      "Bash(./mvnw -version)",
+      "Bash(curl -s -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@nenjankod.in\",\"password\":\"Admin@123\"}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(gunzip -c \"/Users/m0hammedadhilameenkv/.claude/projects/-Users-m0hammedadhilameenkv-Desktop-Auradev-ERP-auradev-erp/29562ff0-c2ba-4e49-a765-3d045efffc5a/tool-results/webfetch-1780920879268-p795xm.bin\")",
+      "Bash(tar -x)",
+      "Read(//tmp/**)"
+    ]
+  }
+}
