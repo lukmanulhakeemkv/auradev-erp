@@ -1,38 +1,56 @@
 import { apiFetch } from './api'
 import type { Product } from './erp-data'
 
-// ── Backend DTOs ──────────────────────────────────────────────────────────────
-// Adjust field names here if your Spring Boot DTOs differ.
+// ── Backend DTOs (schema v2.0) ────────────────────────────────────────────────
 
 interface ApiProduct {
   id: string
   name: string
   sku: string
   barcode: string | null
-  category: string | { id: string; name: string }
-  unit: 'kg' | 'pcs'
-  mrp: number
-  price: number
-  cost: number
-  taxRate: number
-  stock: number
-  reorderLevel: number
+  categoryName: string | null
+  categoryId: string | null
+  unitLabel: string
+  unitType: string
+  priceMrp: number
+  priceSelling: number
+  costPrice: number | null
+  taxRatePct: number
+  quantityOnHand: number
+  lowStockThreshold: number | null
+  reorderQuantity: number | null
 }
 
-interface ApiCategory {
+export interface ApiCategory {
   id: string
   name: string
+  slug: string
 }
 
 interface Page<T> {
   content: T[]
   totalElements: number
   totalPages: number
-  number: number
+  page: number
   size: number
 }
 
+export interface StockMovement {
+  id: string
+  movementType: string
+  signedDelta: number
+  quantity: number
+  notes: string | null
+  quantityAfter: number
+  createdAt: string
+}
+
 // ── Mapper ────────────────────────────────────────────────────────────────────
+
+function mapUnit(unitType: string, unitLabel: string): 'pcs' | 'kg' {
+  if (unitType === 'weight_kg' || unitType === 'weight_g' || unitLabel === 'kg') return 'kg'
+  return 'pcs'
+}
 
 function mapProduct(p: ApiProduct): Product {
   return {
@@ -40,15 +58,35 @@ function mapProduct(p: ApiProduct): Product {
     name: p.name,
     sku: p.sku,
     barcode: p.barcode ?? '—',
-    cat: typeof p.category === 'string' ? p.category : (p.category as { name: string }).name,
-    unit: p.unit,
-    mrp: p.mrp,
-    price: p.price,
-    cost: p.cost ?? 0,
-    tax: p.taxRate ?? 0,
-    stock: p.stock ?? 0,
-    reorder: p.reorderLevel ?? 0,
+    cat: p.categoryName ?? 'Uncategorised',
+    unit: mapUnit(p.unitType, p.unitLabel),
+    mrp: Number(p.priceMrp),
+    price: Number(p.priceSelling),
+    cost: p.costPrice != null ? Number(p.costPrice) : 0,
+    tax: Number(p.taxRatePct),
+    stock: Number(p.quantityOnHand),
+    reorder: Number(p.reorderQuantity ?? p.lowStockThreshold ?? 0),
   }
+}
+
+const REASON_TO_MOVEMENT: Record<string, string> = {
+  grn: 'purchase',
+  damage: 'waste',
+  return: 'return',
+  count: 'adjustment_in',
+}
+
+const MOVEMENT_LABEL: Record<string, string> = {
+  sale: 'Sale',
+  purchase: 'GRN received',
+  return: 'Customer return',
+  waste: 'Damage',
+  adjustment_in: 'Stock count (add)',
+  adjustment_out: 'Stock count (remove)',
+}
+
+export function movementLabel(type: string): string {
+  return MOVEMENT_LABEL[type] ?? type
 }
 
 // ── Form type ─────────────────────────────────────────────────────────────────
@@ -57,7 +95,7 @@ export interface ProductFormData {
   name: string
   sku: string
   barcode: string
-  cat: string
+  categoryId: string
   unit: string
   mrp: string
   price: string
@@ -67,19 +105,46 @@ export interface ProductFormData {
   stock: string
 }
 
-function toApiBody(f: ProductFormData) {
+function unitTypeForForm(unit: string): string {
+  return unit === 'kg' ? 'weight_kg' : 'unit'
+}
+
+function unitLabelForForm(unit: string): string {
+  return unit === 'kg' ? 'kg' : 'pcs'
+}
+
+function toCreateBody(f: ProductFormData) {
   return {
     name: f.name,
     sku: f.sku,
     barcode: f.barcode || null,
-    category: f.cat,
-    unit: f.unit,
-    mrp: +f.mrp,
-    price: +f.price,
-    cost: +f.cost || 0,
-    taxRate: +f.tax,
-    stock: +f.stock || 0,
-    reorderLevel: +f.reorder || 0,
+    categoryId: f.categoryId,
+    unitType: unitTypeForForm(f.unit),
+    unitLabel: unitLabelForForm(f.unit),
+    priceMrp: +f.mrp,
+    priceSelling: +f.price,
+    costPrice: f.cost ? +f.cost : null,
+    taxRatePct: +f.tax,
+    initialStock: +f.stock || 0,
+    lowStockThreshold: +f.reorder || 0,
+    reorderQuantity: +f.reorder || 0,
+  }
+}
+
+function toUpdateBody(f: ProductFormData) {
+  return {
+    name: f.name,
+    sku: f.sku,
+    barcode: f.barcode || null,
+    categoryId: f.categoryId,
+    unitType: unitTypeForForm(f.unit),
+    unitLabel: unitLabelForForm(f.unit),
+    priceMrp: +f.mrp,
+    priceSelling: +f.price,
+    costPrice: f.cost ? +f.cost : null,
+    taxRatePct: +f.tax,
+    lowStockThreshold: +f.reorder || 0,
+    reorderQuantity: +f.reorder || 0,
   }
 }
 
@@ -90,10 +155,15 @@ export async function fetchProducts(): Promise<Product[]> {
   return data.content.map(mapProduct)
 }
 
+export async function fetchProduct(id: string): Promise<Product> {
+  const p = await apiFetch<ApiProduct>(`/api/v1/products/${id}`)
+  return mapProduct(p)
+}
+
 export async function createProduct(f: ProductFormData): Promise<Product> {
   const created = await apiFetch<ApiProduct>('/api/v1/products', {
     method: 'POST',
-    body: JSON.stringify(toApiBody(f)),
+    body: JSON.stringify(toCreateBody(f)),
   })
   return mapProduct(created)
 }
@@ -101,7 +171,7 @@ export async function createProduct(f: ProductFormData): Promise<Product> {
 export async function updateProduct(id: string, f: ProductFormData): Promise<Product> {
   const updated = await apiFetch<ApiProduct>(`/api/v1/products/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(toApiBody(f)),
+    body: JSON.stringify(toUpdateBody(f)),
   })
   return mapProduct(updated)
 }
@@ -117,17 +187,30 @@ export async function adjustStock(
   delta: number,
   reason: string,
   notes: string,
-): Promise<Product> {
-  const updated = await apiFetch<ApiProduct>(`/api/v1/products/${id}/stock-adjust`, {
+): Promise<void> {
+  const movementType = delta > 0
+    ? (REASON_TO_MOVEMENT[reason] ?? 'adjustment_in')
+    : (reason === 'damage' ? 'waste' : reason === 'return' ? 'return' : 'adjustment_out')
+
+  await apiFetch(`/api/v1/products/${id}/stock-adjust`, {
     method: 'POST',
-    body: JSON.stringify({ quantity: delta, reason, notes: notes || null }),
+    body: JSON.stringify({
+      movementType,
+      quantity: Math.abs(delta),
+      notes: notes || null,
+    }),
   })
-  return mapProduct(updated)
+}
+
+// ── Movements ─────────────────────────────────────────────────────────────────
+
+export async function fetchMovements(productId: string): Promise<StockMovement[]> {
+  const data = await apiFetch<Page<StockMovement>>(`/api/v1/products/${productId}/movements?size=50`)
+  return data.content
 }
 
 // ── Categories ────────────────────────────────────────────────────────────────
 
-export async function fetchCategories(): Promise<string[]> {
-  const data = await apiFetch<ApiCategory[]>('/api/v1/categories')
-  return data.map(c => c.name)
+export async function fetchCategories(): Promise<ApiCategory[]> {
+  return apiFetch<ApiCategory[]>('/api/v1/categories')
 }

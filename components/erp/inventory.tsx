@@ -4,11 +4,13 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, useToast, useClickOutside,
 } from './ui'
-import { CATEGORIES, CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
+import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
-  fetchProducts, fetchCategories, createProduct, updateProduct, adjustStock,
-  type ProductFormData,
+  fetchProducts, fetchProduct, fetchCategories, createProduct, updateProduct, adjustStock,
+  fetchMovements, movementLabel,
+  type ProductFormData, type ApiCategory, type StockMovement,
 } from '@/lib/inventory-api'
+import { useAuth } from '@/lib/auth-context'
 
 const STATUS_BADGE = {
   in:  { tone: 'success', label: 'In Stock' },
@@ -84,16 +86,36 @@ function AdjustModal({ product, onClose, onSave }: {
   )
 }
 
+function formatMoveDate(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const time = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
+  if (sameDay) return `Today ${time}`
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' ' + time
+}
+
+function moveTone(m: StockMovement): string {
+  if (m.signedDelta > 0) return 'success'
+  if (m.movementType === 'waste') return 'warning'
+  return 'danger'
+}
+
 function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => void }) {
-  const moves = [
-    { t: 'Sale', q: -2, by: 'Priya N.', d: 'Today 6:48 PM', tone: 'danger' },
-    { t: 'GRN received', q: +40, by: 'Manoj R.', d: 'Today 2:10 PM', tone: 'success' },
-    { t: 'Sale', q: -6, by: 'Deepa S.', d: 'Today 11:20 AM', tone: 'danger' },
-    { t: 'Stock count', q: +3, by: 'Kiran B.', d: 'Yesterday 8:00 PM', tone: 'info' },
-    { t: 'Sale', q: -4, by: 'Priya N.', d: 'Yesterday 5:32 PM', tone: 'danger' },
-    { t: 'Damage', q: -1, by: 'Manoj R.', d: 'Yesterday 1:05 PM', tone: 'warning' },
-    { t: 'GRN received', q: +60, by: 'Manoj R.', d: '28 May 7:51 PM', tone: 'success' },
-  ]
+  const [moves, setMoves] = useState<StockMovement[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetchMovements(product.id)
+      .then(setMoves)
+      .catch(() => setMoves([]))
+      .finally(() => setLoading(false))
+  }, [product.id])
+
   return (
     <Drawer title="Movement history" sub={`${product.name} · ${product.sku}`} onClose={onClose}>
       <div className="row gap12" style={{ marginBottom: 16 }}>
@@ -106,15 +128,19 @@ function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => 
           <div className="kpi-val tnum" style={{ fontSize: 22 }}>{product.reorder}</div>
         </div>
       </div>
-      {moves.map((m, i) => (
-        <div key={i} className="row gap10" style={{ padding: '10px 0', borderBottom: i < moves.length - 1 ? '1px solid var(--border)' : 0 }}>
-          <IconTile tone={`tile-${m.tone}`} size={30} icon={m.q > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} />
+      {loading ? (
+        <div className="muted" style={{ textAlign: 'center', padding: 24, fontSize: 13 }}>Loading movements…</div>
+      ) : moves.length === 0 ? (
+        <div className="muted" style={{ textAlign: 'center', padding: 24, fontSize: 13 }}>No stock movements yet.</div>
+      ) : moves.map((m, i) => (
+        <div key={m.id} className="row gap10" style={{ padding: '10px 0', borderBottom: i < moves.length - 1 ? '1px solid var(--border)' : 0 }}>
+          <IconTile tone={`tile-${moveTone(m)}`} size={30} icon={m.signedDelta > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{m.t}</div>
-            <div className="td-sub">{m.by} · {m.d}</div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{movementLabel(m.movementType)}</div>
+            <div className="td-sub">{formatMoveDate(m.createdAt)}{m.notes ? ` · ${m.notes}` : ''}</div>
           </div>
-          <span className="tnum" style={{ fontWeight: 700, color: m.q > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
-            {m.q > 0 ? '+' : ''}{m.q}
+          <span className="tnum" style={{ fontWeight: 700, color: m.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
+            {m.signedDelta > 0 ? '+' : ''}{m.signedDelta}
           </span>
         </div>
       ))}
@@ -125,15 +151,15 @@ function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => 
 function ProductModal({ onClose, onSave, categories, initialProduct }: {
   onClose: () => void
   onSave: (f: ProductFormData) => void
-  categories: string[]
+  categories: ApiCategory[]
   initialProduct?: Product
 }) {
-  const defaultCat = categories[0] ?? 'Grains'
+  const defaultCatId = categories.find(c => c.name === initialProduct?.cat)?.id ?? categories[0]?.id ?? ''
   const [f, setF] = useState<ProductFormData>({
     name: initialProduct?.name ?? '',
     sku: initialProduct?.sku ?? '',
     barcode: initialProduct?.barcode === '—' ? '' : (initialProduct?.barcode ?? ''),
-    cat: initialProduct?.cat ?? defaultCat,
+    categoryId: defaultCatId,
     unit: initialProduct?.unit ?? 'pcs',
     mrp: initialProduct ? String(initialProduct.mrp) : '',
     price: initialProduct ? String(initialProduct.price) : '',
@@ -145,7 +171,7 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
   const [tried, setTried] = useState(false)
   const set = (k: keyof ProductFormData) => (v: string) => setF(s => ({ ...s, [k]: v }))
   const err = (k: keyof ProductFormData) => tried && !String(f[k]).trim() ? 'Required' : null
-  const valid = f.name.trim() && f.sku.trim() && f.price && f.mrp
+  const valid = f.name.trim() && f.sku.trim() && f.price && f.mrp && f.categoryId
   const isEdit = Boolean(initialProduct)
 
   return (
@@ -169,7 +195,9 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
         </div>
         <Field label="SKU" required error={err('sku')}><TextInput value={f.sku} onChange={set('sku')} placeholder="GRN-RICE-25" error={Boolean(err('sku'))} /></Field>
         <Field label="Barcode" optional><TextInput value={f.barcode} onChange={set('barcode')} placeholder="8901234500000" /></Field>
-        <Field label="Category"><Select value={f.cat} onChange={set('cat')} options={categories.map(c => ({ value: c, label: c }))} /></Field>
+        <Field label="Category" required error={tried && !f.categoryId ? 'Required' : null}>
+          <Select value={f.categoryId} onChange={set('categoryId')} options={categories.map(c => ({ value: c.id, label: c.name }))} />
+        </Field>
         <Field label="Unit type"><Select value={f.unit} onChange={set('unit')} options={[{ value: 'pcs', label: 'Unit (pcs / packet)' }, { value: 'kg', label: 'Weight (kg)' }]} /></Field>
         <Field label="MRP (₹)" required error={err('mrp')}><TextInput type="number" value={f.mrp} onChange={set('mrp')} placeholder="0" error={Boolean(err('mrp'))} /></Field>
         <Field label="Selling price (₹)" required error={err('price')}><TextInput type="number" value={f.price} onChange={set('price')} placeholder="0" error={Boolean(err('price'))} /></Field>
@@ -183,9 +211,10 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
 }
 
 export function Inventory() {
+  const { user } = useAuth()
   const toast = useToast()
   const [products, setProducts] = useState<Product[]>([])
-  const [categories, setCategories] = useState<string[]>(CATEGORIES)
+  const [categories, setCategories] = useState<ApiCategory[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState('')
@@ -207,7 +236,7 @@ export function Inventory() {
     try {
       const [prods, cats] = await Promise.all([fetchProducts(), fetchCategories()])
       setProducts(prods)
-      if (cats.length > 0) setCategories(cats)
+      setCategories(cats)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load products')
     } finally {
@@ -215,7 +244,10 @@ export function Inventory() {
     }
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    if (!user) return
+    loadData()
+  }, [user])
 
   const lowCount = products.filter(p => stockStatus(p) !== 'in').length
 
@@ -262,7 +294,8 @@ export function Inventory() {
     const target = adjust
     setAdjust(null)
     try {
-      const updated = await adjustStock(target.id, delta, reason, notes)
+      await adjustStock(target.id, delta, reason, notes)
+      const updated = await fetchProduct(target.id)
       setProducts(ps => ps.map(p => p.id === updated.id ? updated : p))
       toast(`${delta > 0 ? '+' : ''}${delta} ${target.unit} · ${target.name}`, { icon: 'package-check' })
     } catch {
@@ -326,7 +359,7 @@ export function Inventory() {
             <input value={q} onChange={e => { setQ(e.target.value); setPage(0) }} placeholder="Search name, SKU or barcode" />
           </div>
           <Select size="sm" width={150} value={cat} onChange={v => { setCat(v); setPage(0) }}
-            options={[{ value: 'all', label: 'All categories' }, ...categories.map(c => ({ value: c, label: c }))]} />
+            options={[{ value: 'all', label: 'All categories' }, ...categories.map(c => ({ value: c.name, label: c.name }))]} />
           <Select size="sm" width={140} value={unit} onChange={v => { setUnit(v); setPage(0) }}
             options={[{ value: 'all', label: 'All units' }, { value: 'pcs', label: 'Unit-based' }, { value: 'kg', label: 'Weight-based' }]} />
           <Select size="sm" width={150} value={status} onChange={v => { setStatus(v); setPage(0) }}

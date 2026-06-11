@@ -62,11 +62,13 @@ export async function apiFetch<T = unknown>(
   const token = getAccessToken()
 
   const makeRequest = async (accessToken: string | null) => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> ?? {}),
+    const headers = new Headers(options.headers)
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
     }
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    if (accessToken) {
+      headers.set('Authorization', `Bearer ${accessToken}`)
+    }
 
     return fetch(`${BASE}${path}`, { ...options, headers })
   }
@@ -86,8 +88,9 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new ApiError(res.status, body?.message ?? res.statusText, body)
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
+    const msg = (body?.detail ?? body?.message ?? body?.title ?? res.statusText) as string
+    throw new ApiError(res.status, msg, body)
   }
 
   // 204 No Content
