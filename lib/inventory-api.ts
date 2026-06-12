@@ -80,6 +80,7 @@ const MOVEMENT_LABEL: Record<string, string> = {
   sale: 'Sale',
   purchase: 'GRN received',
   return: 'Customer return',
+  customer_return: 'Customer return',
   waste: 'Damage',
   adjustment_in: 'Stock count (add)',
   adjustment_out: 'Stock count (remove)',
@@ -155,8 +156,20 @@ export async function fetchProducts(): Promise<Product[]> {
   return data.content.map(mapProduct)
 }
 
+export async function searchProducts(q: string, size = 8): Promise<Product[]> {
+  const data = await apiFetch<Page<ApiProduct>>(
+    `/api/v1/products?q=${encodeURIComponent(q)}&size=${size}&sort=name,asc`,
+  )
+  return data.content.map(mapProduct)
+}
+
 export async function fetchProduct(id: string): Promise<Product> {
   const p = await apiFetch<ApiProduct>(`/api/v1/products/${id}`)
+  return mapProduct(p)
+}
+
+export async function fetchProductByBarcode(barcode: string): Promise<Product> {
+  const p = await apiFetch<ApiProduct>(`/api/v1/products/barcode/${encodeURIComponent(barcode)}`)
   return mapProduct(p)
 }
 
@@ -182,31 +195,58 @@ export async function deleteProduct(id: string): Promise<void> {
 
 // ── Stock adjust ──────────────────────────────────────────────────────────────
 
+function resolveMovementType(delta: number, reason: string): string {
+  if (delta > 0) {
+    return REASON_TO_MOVEMENT[reason] ?? 'adjustment_in'
+  }
+  if (reason === 'damage') return 'waste'
+  return 'adjustment_out'
+}
+
 export async function adjustStock(
   id: string,
   delta: number,
   reason: string,
   notes: string,
-): Promise<void> {
-  const movementType = delta > 0
-    ? (REASON_TO_MOVEMENT[reason] ?? 'adjustment_in')
-    : (reason === 'damage' ? 'waste' : reason === 'return' ? 'return' : 'adjustment_out')
-
+): Promise<Product> {
   await apiFetch(`/api/v1/products/${id}/stock-adjust`, {
     method: 'POST',
     body: JSON.stringify({
-      movementType,
+      movementType: resolveMovementType(delta, reason),
       quantity: Math.abs(delta),
       notes: notes || null,
     }),
   })
+  return fetchProduct(id)
 }
 
 // ── Movements ─────────────────────────────────────────────────────────────────
 
+interface ApiStockMovement {
+  id: string
+  movementType: string
+  signedDelta: number | string
+  quantity: number | string
+  notes: string | null
+  quantityAfter: number | string
+  createdAt: string
+}
+
+function mapMovement(m: ApiStockMovement): StockMovement {
+  return {
+    id: m.id,
+    movementType: m.movementType,
+    signedDelta: Number(m.signedDelta),
+    quantity: Number(m.quantity),
+    notes: m.notes,
+    quantityAfter: Number(m.quantityAfter),
+    createdAt: m.createdAt,
+  }
+}
+
 export async function fetchMovements(productId: string): Promise<StockMovement[]> {
-  const data = await apiFetch<Page<StockMovement>>(`/api/v1/products/${productId}/movements?size=50`)
-  return data.content
+  const data = await apiFetch<Page<ApiStockMovement>>(`/api/v1/products/${productId}/movements?size=50`)
+  return data.content.map(mapMovement)
 }
 
 // ── Categories ────────────────────────────────────────────────────────────────

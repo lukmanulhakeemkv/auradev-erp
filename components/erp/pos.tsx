@@ -2,7 +2,11 @@
 
 import { useState, useCallback, useEffect } from 'react'
 import { Icon, Button, Badge, Field, TextInput, Select, Segmented, Modal, IconTile, useToast } from './ui'
-import { PRODUCTS, CUSTOMERS, CAT_TONE, CAT_ICON, stockStatus, money, money2, type Product, type Customer } from '@/lib/erp-data'
+import { CAT_TONE, CAT_ICON, stockStatus, money, money2, type Product } from '@/lib/erp-data'
+import { fetchProducts, fetchProductByBarcode } from '@/lib/inventory-api'
+import { fetchCustomers, createBill, type ApiCustomer, type SavedBill } from '@/lib/billing-api'
+import { saveReceiptPng, saveReceiptPdf, DEFAULT_RECEIPT_META } from '@/lib/receipt-export'
+import { useAuth } from '@/lib/auth-context'
 
 interface CartItem { p: Product; qty: number; disc: number }
 
@@ -32,8 +36,12 @@ function ProductCard({ p, onAdd, dense }: { p: Product; onAdd: (p: Product) => v
 
 const PAY_ICON: Record<string, string> = { Cash: 'banknote', UPI: 'qr-code', Card: 'credit-card', Credit: 'notebook-pen', Split: 'split' }
 
-function PaymentModal({ total, customer, onClose, onDone }: {
-  total: number; customer: Customer | undefined; onClose: () => void; onDone: (method: string) => void
+function PaymentModal({ total, customer, onClose, onDone, busy }: {
+  total: number
+  customer: ApiCustomer | undefined
+  onClose: () => void
+  onDone: (method: string, tendered: number, splitCash: number) => void
+  busy?: boolean
 }) {
   const [method, setMethod] = useState('Cash')
   const [tendered, setTendered] = useState('')
@@ -43,18 +51,20 @@ function PaymentModal({ total, customer, onClose, onDone }: {
   const change = Math.max(0, tend - total)
   const sCash = parseFloat(splitCash) || 0
   const sUpi = Math.max(0, total - sCash)
-  const canCredit = customer && customer.type !== 'walkin'
+  const allowCredit = customer && customer.type !== 'walkin'
   const methods = ['Cash', 'UPI', 'Card', 'Credit', 'Split']
   const quick = [total, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500, 2000]
     .filter((v, i, a) => a.indexOf(v) === i && v >= total).slice(0, 3)
 
-  const canPay = method === 'Cash' ? tend >= total : method === 'Credit' ? Boolean(canCredit) : true
+  const canPay = method === 'Cash' ? tend >= total : method === 'Credit' ? Boolean(allowCredit) : true
 
   return (
     <Modal title="Take payment" sub={`Amount due · ${money2(total)}`} icon="wallet" wide onClose={onClose}
       footer={<>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" icon="check" disabled={!canPay} onClick={() => onDone(method)}>Confirm &amp; print</Button>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="primary" icon="check" disabled={!canPay || busy} onClick={() => onDone(method, tend, sCash)}>
+          {busy ? 'Saving…' : 'Confirm & save receipt'}
+        </Button>
       </>}
     >
       <div className="seg" style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', marginBottom: 18 }}>
@@ -115,21 +125,21 @@ function PaymentModal({ total, customer, onClose, onDone }: {
       )}
 
       {method === 'Credit' && (
-        canCredit ? (
+        allowCredit ? (
           <div className="pay-summary">
             <div className="row gap10" style={{ marginBottom: 10 }}>
               <span className="avatar sm">{customer!.name.split(' ').map(w => w[0]).join('').toUpperCase()}</span>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{customer!.name}</div>
-                <div className="td-sub">{customer!.phone}</div>
+                <div className="td-sub">{customer!.phone ?? ''}</div>
               </div>
             </div>
-            <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Current balance</span><span className="tnum">{money2(customer!.balance ?? 0)}</span></div>
+            <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Current balance</span><span className="tnum">{money2(customer!.creditBalance)}</span></div>
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">This bill</span><span className="tnum">{money2(total)}</span></div>
             <div className="divider" style={{ margin: '8px 0' }} />
             <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}>
               <span>New balance</span>
-              <span className="tnum" style={{ color: 'var(--warning-fg)' }}>{money2((customer!.balance ?? 0) + total)}</span>
+              <span className="tnum" style={{ color: 'var(--warning-fg)' }}>{money2(customer!.creditBalance + total)}</span>
             </div>
           </div>
         ) : (
@@ -160,26 +170,88 @@ function PaymentModal({ total, customer, onClose, onDone }: {
   )
 }
 
-export function POS() {
+function ReceiptModal({ bill, onClose }: { bill: SavedBill; onClose: () => void }) {
+  return (
+    <Modal title="Bill saved" sub={bill.billNo} icon="receipt" onClose={onClose}
+      footer={<>
+        <Button variant="outline" icon="image" onClick={() => saveReceiptPng(bill, DEFAULT_RECEIPT_META)}>Download PNG</Button>
+        <Button variant="primary" icon="file-down" onClick={() => saveReceiptPdf(bill, DEFAULT_RECEIPT_META)}>Download PDF</Button>
+      </>}
+    >
+      <div className="pay-summary" style={{ fontSize: 13 }}>
+        <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Customer</span><span>{bill.customerName}</span></div>
+        <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Items</span><span>{bill.lines.length}</span></div>
+        <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, marginTop: 8 }}>
+          <span>Total paid</span><span className="tnum">{money2(bill.grandTotal)}</span>
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          Stock has been updated. Receipt PNG/PDF downloads to your device — no printer required.
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+export function POS({
+  prefillQuery,
+  prefillKey,
+  onPrefillConsumed,
+}: {
+  prefillQuery?: string
+  prefillKey?: number
+  onPrefillConsumed?: () => void
+} = {}) {
+  const { user } = useAuth()
   const toast = useToast()
-  const [cart, setCart] = useState<CartItem[]>([
-    { p: PRODUCTS[0], qty: 2, disc: 0 },
-    { p: PRODUCTS[6], qty: 4, disc: 0 },
-    { p: PRODUCTS[20], qty: 6, disc: 0 },
-  ])
+  const [products, setProducts] = useState<Product[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [cart, setCart] = useState<CartItem[]>([])
   const [cat, setCat] = useState('All')
   const [q, setQ] = useState('')
   const [barcode, setBarcode] = useState('')
-  const [customerId, setCustomerId] = useState('C001')
+  const [customers, setCustomers] = useState<ApiCustomer[]>([])
+  const [customerId, setCustomerId] = useState('')
   const [billDisc, setBillDisc] = useState(0)
   const [discMode, setDiscMode] = useState('₹')
   const [layout, setLayout] = useState('split')
   const [payOpen, setPayOpen] = useState(false)
-  const [billNo, setBillNo] = useState(4413)
+  const [payBusy, setPayBusy] = useState(false)
+  const [savedBill, setSavedBill] = useState<SavedBill | null>(null)
 
-  const customer = CUSTOMERS.find(c => c.id === customerId)
-  const cats = ['All', ...Array.from(new Set(PRODUCTS.map(p => p.cat)))]
-  const filtered = PRODUCTS.filter(p =>
+  async function loadProducts() {
+    setLoading(true)
+    setError(null)
+    try {
+      const [prods, custs] = await Promise.all([fetchProducts(), fetchCustomers()])
+      setProducts(prods)
+      setCustomers(custs)
+      if (!customerId && custs.length) {
+        const walkin = custs.find(c => c.type === 'walkin') ?? custs[0]
+        setCustomerId(walkin.id)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load products')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return
+    loadProducts()
+  }, [user])
+
+  useEffect(() => {
+    if (!prefillQuery || prefillKey == null) return
+    setQ(prefillQuery)
+    setCat('All')
+    onPrefillConsumed?.()
+  }, [prefillKey, prefillQuery, onPrefillConsumed])
+
+  const customer = customers.find(c => c.id === customerId)
+  const cats = ['All', ...Array.from(new Set(products.map(p => p.cat)))]
+  const filtered = products.filter(p =>
     (cat === 'All' || p.cat === cat) &&
     (!q || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))
   )
@@ -196,13 +268,27 @@ export function POS() {
     setCart(c => c.map(x => x.p.id === id ? { ...x, qty: Math.max(0, +qty.toFixed(2)) } : x).filter(x => x.qty > 0))
   const remove = (id: string) => setCart(c => c.filter(x => x.p.id !== id))
 
-  function onBarcode(e: React.KeyboardEvent<HTMLInputElement>) {
+  async function onBarcode(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== 'Enter') return
     const code = barcode.trim()
-    const p = PRODUCTS.find(x => x.barcode === code || x.sku.toLowerCase() === code.toLowerCase())
-    if (p) { add(p); toast(p.name + ' added') }
-    else toast(`No product for "${code}"`, { icon: 'search-x', tone: '' })
+    if (!code) return
     setBarcode('')
+
+    const local = products.find(x => x.barcode === code || x.sku.toLowerCase() === code.toLowerCase())
+    if (local) {
+      add(local)
+      toast(local.name + ' added')
+      return
+    }
+
+    try {
+      const p = await fetchProductByBarcode(code)
+      add(p)
+      setProducts(ps => ps.some(x => x.id === p.id) ? ps : [...ps, p])
+      toast(p.name + ' added')
+    } catch {
+      toast(`No product for "${code}"`, { icon: 'search-x', tone: '' })
+    }
   }
 
   const subtotal = cart.reduce((s, x) => s + x.p.price * x.qty, 0)
@@ -210,19 +296,58 @@ export function POS() {
   const discVal = discMode === '%' ? subtotal * (billDisc || 0) / 100 : (billDisc || 0)
   const grand = Math.max(0, subtotal - discVal + gst)
 
-  function completeSale(method: string) {
-    setPayOpen(false)
-    const no = 'NJK-2025-0' + billNo
-    setBillNo(n => n + 1)
-    setCart([]); setBillDisc(0); setCustomerId('C001')
-    toast(`Bill ${no} · ${method} · ${money(grand)} printed`, { icon: 'receipt' })
+  async function completeSale(method: string, tendered: number, splitCash: number) {
+    if (!customerId || !cart.length) return
+    setPayBusy(true)
+    try {
+      const payMethod = (method === 'Split' ? 'CASH' : method.toUpperCase()) as 'CASH' | 'UPI' | 'CARD' | 'CREDIT'
+      const bill = await createBill({
+        customerId,
+        discountMode: discMode === '%' ? 'PERCENT' : 'AMOUNT',
+        billDiscount: billDisc || 0,
+        items: cart.map(x => ({
+          productId: x.p.id,
+          quantity: x.qty,
+          lineDiscount: x.disc || 0,
+        })),
+        payment: {
+          method: payMethod,
+          tendered: method === 'Cash' ? tendered : undefined,
+          splitCashAmount: method === 'Split' && splitCash > 0 ? splitCash : undefined,
+        },
+      })
+
+      setProducts(ps => ps.map(p => {
+        const sold = cart.find(x => x.p.id === p.id)
+        return sold ? { ...p, stock: Math.max(0, +(p.stock - sold.qty).toFixed(3)) } : p
+      }))
+
+      const walkin = customers.find(c => c.type === 'walkin')
+      setPayOpen(false)
+      setCart([])
+      setBillDisc(0)
+      if (walkin) setCustomerId(walkin.id)
+      setSavedBill(bill)
+      void saveReceiptPng(bill, DEFAULT_RECEIPT_META)
+      toast(`Bill ${bill.billNo} saved · stock updated`, { icon: 'receipt' })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to complete sale'
+      toast(msg, { icon: 'alert-circle' })
+    } finally {
+      setPayBusy(false)
+    }
   }
+
   function holdBill() {
     if (!cart.length) return
-    toast('Bill held as draft', { icon: 'pause' })
-    setCart([]); setBillDisc(0)
+    toast('Hold bill is not synced to server yet', { icon: 'pause' })
   }
-  function clearBill() { setCart([]); setBillDisc(0); setCustomerId('C001') }
+  function clearBill() {
+    setCart([])
+    setBillDisc(0)
+    const walkin = customers.find(c => c.type === 'walkin')
+    if (walkin) setCustomerId(walkin.id)
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -244,7 +369,7 @@ export function POS() {
           value={customerId}
           onChange={setCustomerId}
           icon="user-round"
-          options={CUSTOMERS.map(c => ({
+          options={customers.map(c => ({
             value: c.id,
             label: c.name,
             sub: c.phone || (c.type === 'walkin' ? 'No profile needed' : ''),
@@ -333,12 +458,27 @@ export function POS() {
         ))}
       </div>
       <div className="prod-grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${dense ? 132 : 158}px, 1fr))` }}>
-        {filtered.map(p => <ProductCard key={p.id} p={p} onAdd={add} dense={dense} />)}
-        {filtered.length === 0 && (
+        {loading ? (
           <div className="empty" style={{ gridColumn: '1/-1' }}>
-            <div className="ei"><Icon name="search-x" size={22} /></div>
-            <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No products found</div>
+            <Icon name="loader" size={22} />
+            <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading products…</div>
           </div>
+        ) : error ? (
+          <div className="empty" style={{ gridColumn: '1/-1' }}>
+            <div className="ei"><Icon name="alert-circle" size={22} /></div>
+            <div style={{ fontWeight: 600, color: 'var(--danger-fg)' }}>{error}</div>
+            <Button size="sm" variant="outline" icon="refresh-cw" onClick={loadProducts} style={{ marginTop: 10 }}>Retry</Button>
+          </div>
+        ) : (
+          <>
+            {filtered.map(p => <ProductCard key={p.id} p={p} onAdd={add} dense={dense} />)}
+            {filtered.length === 0 && (
+              <div className="empty" style={{ gridColumn: '1/-1' }}>
+                <div className="ei"><Icon name="search-x" size={22} /></div>
+                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No products found</div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -347,7 +487,16 @@ export function POS() {
   return (
     <div className="pos-root">
       {cartFirst ? <>{cartPanel}{productPanel}</> : <>{productPanel}{cartPanel}</>}
-      {payOpen && <PaymentModal total={grand} customer={customer} onClose={() => setPayOpen(false)} onDone={completeSale} />}
+      {payOpen && (
+        <PaymentModal
+          total={grand}
+          customer={customer}
+          onClose={() => !payBusy && setPayOpen(false)}
+          onDone={completeSale}
+          busy={payBusy}
+        />
+      )}
+      {savedBill && <ReceiptModal bill={savedBill} onClose={() => setSavedBill(null)} />}
     </div>
   )
 }

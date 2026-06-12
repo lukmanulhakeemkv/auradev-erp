@@ -210,7 +210,15 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
   )
 }
 
-export function Inventory() {
+export function Inventory({
+  prefillQuery,
+  prefillKey,
+  onPrefillConsumed,
+}: {
+  prefillQuery?: string
+  prefillKey?: number
+  onPrefillConsumed?: () => void
+} = {}) {
   const { user } = useAuth()
   const toast = useToast()
   const [products, setProducts] = useState<Product[]>([])
@@ -248,6 +256,14 @@ export function Inventory() {
     if (!user) return
     loadData()
   }, [user])
+
+  useEffect(() => {
+    if (!prefillQuery || prefillKey == null) return
+    setQ(prefillQuery)
+    setCat('all')
+    setPage(0)
+    onPrefillConsumed?.()
+  }, [prefillKey, prefillQuery, onPrefillConsumed])
 
   const lowCount = products.filter(p => stockStatus(p) !== 'in').length
 
@@ -292,14 +308,15 @@ export function Inventory() {
   async function doAdjust(delta: number, reason: string, notes: string) {
     if (!adjust) return
     const target = adjust
-    setAdjust(null)
     try {
-      await adjustStock(target.id, delta, reason, notes)
-      const updated = await fetchProduct(target.id)
+      const updated = await adjustStock(target.id, delta, reason, notes)
       setProducts(ps => ps.map(p => p.id === updated.id ? updated : p))
+      setHistory(h => (h?.id === updated.id ? updated : h))
+      setAdjust(null)
       toast(`${delta > 0 ? '+' : ''}${delta} ${target.unit} · ${target.name}`, { icon: 'package-check' })
-    } catch {
-      toast('Failed to adjust stock', { icon: 'alert-circle' })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to adjust stock'
+      toast(msg, { icon: 'alert-circle' })
     }
   }
 

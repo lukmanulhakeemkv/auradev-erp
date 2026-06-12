@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { ToastProvider, useToast } from './ui'
 import { Sidebar, Topbar, type ViewId } from './shell'
+import { GlobalSearch, type GlobalSearchSelect } from './global-search'
 import { Dashboard } from './dashboard'
 import { POS } from './pos'
 import { Inventory } from './inventory'
@@ -16,10 +17,28 @@ function AppInner() {
   const [view, setView] = useState<ViewId>('dashboard')
   const [theme, setThemeState] = useState<'light' | 'dark'>('light')
   const [collapsed, setCollapsed] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [prefill, setPrefill] = useState<{ view: ViewId; q: string; key: number } | null>(null)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(o => !o)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  function handleSearchSelect(sel: GlobalSearchSelect) {
+    setView(sel.view)
+    if (sel.query) setPrefill({ view: sel.view, q: sel.query, key: Date.now() })
+  }
 
   function setTheme(t: string) {
     setThemeState(t as 'light' | 'dark')
@@ -37,13 +56,36 @@ function AppInner() {
           setTheme={setTheme}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
-          onCmd={() => toast('Search — use the search on each screen', { icon: 'command', tone: '' })}
+          onCmd={() => setSearchOpen(true)}
+        />
+        <GlobalSearch
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          onSelect={handleSearchSelect}
         />
         <div className={'content' + (isPOS ? ' pos-mode' : '')}>
           {view === 'dashboard' && <Dashboard setView={(v) => setView(v as ViewId)} />}
-          {view === 'pos'       && <POS />}
-          {view === 'inventory' && <Inventory />}
-          {view === 'purchases' && <Purchases />}
+          {view === 'pos' && (
+            <POS
+              prefillQuery={prefill?.view === 'pos' ? prefill.q : undefined}
+              prefillKey={prefill?.view === 'pos' ? prefill.key : undefined}
+              onPrefillConsumed={() => setPrefill(null)}
+            />
+          )}
+          {view === 'inventory' && (
+            <Inventory
+              prefillQuery={prefill?.view === 'inventory' ? prefill.q : undefined}
+              prefillKey={prefill?.view === 'inventory' ? prefill.key : undefined}
+              onPrefillConsumed={() => setPrefill(null)}
+            />
+          )}
+          {view === 'purchases' && (
+            <Purchases
+              prefillQuery={prefill?.view === 'purchases' ? prefill.q : undefined}
+              prefillKey={prefill?.view === 'purchases' ? prefill.key : undefined}
+              onPrefillConsumed={() => setPrefill(null)}
+            />
+          )}
           {view === 'settings'  && <Settings />}
         </div>
       </div>

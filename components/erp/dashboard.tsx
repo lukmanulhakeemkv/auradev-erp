@@ -1,19 +1,28 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Icon, Button, Badge, KpiCard, Card, Segmented, IconTile, useToast,
 } from './ui'
-import {
-  PRODUCTS, BILLS, SALES_7D, TOP_PRODUCTS, ACTIVITY,
-  stockStatus, money, money2,
-} from '@/lib/erp-data'
+import { money } from '@/lib/erp-data'
+import { fetchDashboard, greetingFor, type DashboardData } from '@/lib/dashboard-api'
+import { useAuth } from '@/lib/auth-context'
 
-function LineChart({ data }: { data: typeof SALES_7D }) {
+function LineChart({ data }: { data: { d: string; cur: number; prev: number }[] }) {
+  if (data.length === 0) {
+    return (
+      <div className="empty" style={{ padding: '48px 20px' }}>
+        <div className="ei"><Icon name="bar-chart-3" size={22} /></div>
+        <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No sales data yet</div>
+        <div>Bills completed today will appear here.</div>
+      </div>
+    )
+  }
+
   const W = 720, H = 230, padL = 46, padR = 14, padT = 14, padB = 28
-  const max = Math.max(...data.map(d => Math.max(d.cur, d.prev)))
-  const niceMax = Math.ceil(max / 20000) * 20000
-  const x = (i: number) => padL + (i * (W - padL - padR)) / (data.length - 1)
+  const max = Math.max(...data.flatMap(d => [d.cur, d.prev]), 1)
+  const niceMax = Math.ceil(max / 20000) * 20000 || 20000
+  const x = (i: number) => padL + (i * (W - padL - padR)) / Math.max(data.length - 1, 1)
   const y = (v: number) => padT + (1 - v / niceMax) * (H - padT - padB)
   const line = (key: 'cur' | 'prev') =>
     data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ')
@@ -49,8 +58,18 @@ function LineChart({ data }: { data: typeof SALES_7D }) {
   )
 }
 
-function TopProductsChart({ data }: { data: typeof TOP_PRODUCTS }) {
-  const max = Math.max(...data.map(d => d.rev))
+function TopProductsChart({ data }: { data: DashboardData['topProducts'] }) {
+  if (data.length === 0) {
+    return (
+      <div className="empty" style={{ padding: '32px 12px' }}>
+        <div className="ei"><Icon name="package" size={22} /></div>
+        <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No sales today</div>
+        <div className="muted" style={{ fontSize: 13 }}>Top sellers will show after the first bill.</div>
+      </div>
+    )
+  }
+
+  const max = Math.max(...data.map(d => d.rev), 1)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
       {data.map((d, i) => (
@@ -74,80 +93,168 @@ function TopProductsChart({ data }: { data: typeof TOP_PRODUCTS }) {
 }
 
 export function Dashboard({ setView }: { setView: (v: string) => void }) {
+  const { user } = useAuth()
   const toast = useToast()
-  const [range, setRange] = useState('week')
-  const lowStock = PRODUCTS.filter(p => stockStatus(p) !== 'in').sort((a, b) => a.stock - b.stock).slice(0, 6)
+  const [range, setRange] = useState<'today' | 'week' | 'month'>('week')
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const loadSeq = useRef(0)
+
+  const load = useCallback(async (r: 'today' | 'week' | 'month') => {
+    const seq = ++loadSeq.current
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await fetchDashboard(r)
+      if (seq !== loadSeq.current) return
+      setData(next)
+    } catch (e) {
+      if (seq !== loadSeq.current) return
+      setError(e instanceof Error ? e.message : 'Failed to load dashboard')
+    } finally {
+      if (seq === loadSeq.current) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!user) return
+    load(range)
+  }, [user, range, load])
+
   const today = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
+  const greeting = data ? greetingFor(data.userName) : (user ? greetingFor(user.name) : 'Welcome')
+  const tenant = data?.tenantName ?? 'Your store'
+
+  if (!data) {
+    return (
+      <div className="content-pad" style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1480, margin: '0 auto' }}>
+        <div className="empty" style={{ padding: '80px 0' }}>
+          {error ? (
+            <>
+              <div className="ei"><Icon name="alert-circle" size={22} /></div>
+              <div style={{ fontWeight: 600, color: 'var(--danger-fg)', marginBottom: 8 }}>{error}</div>
+              <div className="muted" style={{ fontSize: 13, maxWidth: 420, margin: '0 auto 12px' }}>
+                Ensure the backend is running with the latest code on port 8080, then retry.
+              </div>
+              <Button size="sm" variant="outline" icon="refresh-cw" onClick={() => load(range)}>Retry</Button>
+            </>
+          ) : (
+            <>
+              <Icon name="loader-2" size={24} />
+              <div style={{ marginTop: 12, fontWeight: 600 }}>Loading dashboard…</div>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const d = data
+  const lowStock = d.lowStock ?? []
 
   return (
     <div className="content-pad" style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1480, margin: '0 auto' }}>
-      {/* Header */}
       <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div className="section-title">Good evening, Anitha 👋</div>
-          <div className="section-sub">Nenjankod Supermarket · Counter activity for today, {today}</div>
+          <div className="section-title">{greeting} 👋</div>
+          <div className="section-sub">{tenant} · Counter activity for today, {today}</div>
         </div>
         <div className="row gap8">
+          <Button size="sm" icon="refresh-cw" onClick={() => load(range)} disabled={loading}>Refresh</Button>
           <Button size="sm" icon="package-plus" onClick={() => setView('inventory')}>Stock Adjustment</Button>
           <Button size="sm" icon="plus" onClick={() => setView('inventory')}>Add Product</Button>
           <Button size="sm" variant="primary" icon="scan-line" onClick={() => setView('pos')}>New Bill</Button>
         </div>
       </div>
 
-      {/* AI insight strip */}
+      {error && (
+        <div className="alert-banner" style={{ borderColor: 'color-mix(in oklab, var(--danger) 35%, transparent)' }}>
+          <Icon name="alert-circle" size={18} />
+          <span>{error}</span>
+          <div style={{ flex: 1 }} />
+          <Button size="sm" variant="outline" onClick={() => load(range)}>Retry</Button>
+        </div>
+      )}
+
       <div className="ai-banner">
         <div className="ai-ic"><Icon name="sparkles" size={18} /></div>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 650, fontSize: 13.5, color: 'var(--primary-soft-fg)' }}>AuraDev AI · Daily brief</div>
-          <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 2 }}>
-            Sales are pacing <b style={{ color: 'var(--success-fg)' }}>+9.4%</b> vs last week. Weekend rush expected — 4 fast movers are below reorder level.
-          </div>
-          <div className="row gap8" style={{ marginTop: 9, flexWrap: 'wrap' }}>
-            <span className="ai-chip"><Icon name="trending-up" size={14} />Saturday is your peak — staff up Counter 2</span>
-            <span className="ai-chip"><Icon name="package" size={14} />Reorder Toor Dal &amp; Shampoo before Fri</span>
-            <span className="ai-chip"><Icon name="banknote" size={14} />₹13.5k credit outstanding from 2 B2B</span>
-          </div>
+          <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 2 }}>{d.aiBrief}</div>
+          {lowStock.length > 0 && (
+            <div className="row gap8" style={{ marginTop: 9, flexWrap: 'wrap' }}>
+              <span className="ai-chip"><Icon name="package" size={14} />{lowStock.length} items need reorder attention</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="kpi-grid">
-        <KpiCard label="Today's Sales" value="₹72,480" icon="indian-rupee" tone="tile-primary" trend="9.4%" trendDir="up" vs="vs yesterday" />
-        <KpiCard label="Bills Today" value="148" icon="receipt" tone="tile-info" trend="12" trendDir="up" vs="vs yesterday" />
-        <KpiCard label="Items Sold" value="1,026" icon="shopping-basket" tone="tile-success" trend="6.1%" trendDir="up" vs="vs yesterday" />
-        <KpiCard label="Low Stock Alerts" value="4" icon="alert-triangle" tone="tile-warning" trend="2" trendDir="down" vs="since morning" />
+        <KpiCard
+          label="Today's Sales"
+          value={money(d.kpis.todaySales)}
+          icon="indian-rupee"
+          tone="tile-primary"
+          trend={d.kpis.salesTrend.value}
+          trendDir={d.kpis.salesTrend.dir}
+          vs={d.kpis.salesTrend.vs}
+        />
+        <KpiCard
+          label="Bills Today"
+          value={String(d.kpis.billsToday)}
+          icon="receipt"
+          tone="tile-info"
+          trend={d.kpis.billsTrend.value}
+          trendDir={d.kpis.billsTrend.dir}
+          vs={d.kpis.billsTrend.vs}
+        />
+        <KpiCard
+          label="Items Sold"
+          value={String(d.kpis.itemsSoldToday)}
+          icon="shopping-basket"
+          tone="tile-success"
+          trend={d.kpis.itemsTrend.value}
+          trendDir={d.kpis.itemsTrend.dir}
+          vs={d.kpis.itemsTrend.vs}
+        />
+        <KpiCard
+          label="Low Stock Alerts"
+          value={String(d.kpis.lowStockCount)}
+          icon="alert-triangle"
+          tone="tile-warning"
+          vs="active alerts"
+        />
       </div>
 
-      {/* Charts row */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16 }}>
         <Card
           title="Sales trend"
-          sub="Last 7 days vs previous 7 days"
+          sub={range === 'today' ? 'Today vs yesterday' : range === 'month' ? 'Last 30 days vs prior period' : 'Last 7 days vs previous 7 days'}
           action={
             <Segmented
               value={range}
-              onChange={setRange}
+              onChange={v => setRange(v as 'today' | 'week' | 'month')}
               options={[{ value: 'today', label: 'Today' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }]}
             />
           }
         >
           <div className="row gap16" style={{ marginBottom: 10, fontSize: 12 }}>
-            <span className="row gap6"><span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--primary)' }} />This week</span>
+            <span className="row gap6"><span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--primary)' }} />Current</span>
             <span className="row gap6"><span style={{ width: 14, height: 0, borderTop: '2px dashed var(--fg-subtle)' }} />Previous</span>
           </div>
-          <LineChart data={SALES_7D} />
+          <LineChart data={d.salesTrend} />
         </Card>
         <Card title="Top products today" sub="By revenue">
-          <TopProductsChart data={TOP_PRODUCTS} />
+          <TopProductsChart data={d.topProducts} />
         </Card>
       </div>
 
-      {/* Bottom: bills + side rail */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16, alignItems: 'start' }}>
         <Card
           title="Recent bills"
           sub="Last 10 transactions"
-          action={<Button size="sm" variant="ghost" iconRight="arrow-right" onClick={() => toast('Bills view — Phase 2', { icon: 'sparkles', tone: '' })}>View all</Button>}
+          action={<Button size="sm" variant="ghost" iconRight="arrow-right" onClick={() => setView('pos')}>New bill</Button>}
           noBody
         >
           <div className="tbl-wrap">
@@ -160,7 +267,13 @@ export function Dashboard({ setView }: { setView: (v: string) => void }) {
                 </tr>
               </thead>
               <tbody>
-                {BILLS.map(b => (
+                {d.recentBills.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '32px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
+                      No bills yet. Complete a sale from Billing / POS.
+                    </td>
+                  </tr>
+                ) : d.recentBills.map(b => (
                   <tr key={b.no}>
                     <td className="mono td-strong" style={{ fontSize: 12.5 }}>{b.no}</td>
                     <td>{b.cust}</td>
@@ -178,26 +291,31 @@ export function Dashboard({ setView }: { setView: (v: string) => void }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Card title="Low stock" sub="Below reorder level" action={<Badge tone="warning" dot>{lowStock.length}</Badge>}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {lowStock.map(p => {
-                const st = stockStatus(p)
-                return (
+            {lowStock.length === 0 ? (
+              <div className="muted" style={{ fontSize: 13, padding: '8px 4px' }}>All products are above reorder level.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {lowStock.map(p => (
                   <div key={p.id} className="row" style={{ justifyContent: 'space-between', gap: 10, padding: '8px 4px', borderBottom: '1px solid var(--border)' }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                      <div className="td-sub">{st === 'out' ? 'Out of stock' : `${p.stock} ${p.unit} left`} · reorder {p.reorder}</div>
+                      <div className="td-sub">
+                        {p.status === 'out' ? 'Out of stock' : `${p.stock} ${p.unit} left`} · reorder {p.reorder}
+                      </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => toast('Reorder draft created for ' + p.name)}>Reorder</Button>
+                    <Button size="sm" variant="outline" onClick={() => setView('inventory')}>Reorder</Button>
                   </div>
-                )
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </Card>
 
           <Card title="Activity" sub="Latest store events" noBody>
             <div style={{ padding: '6px 14px 12px' }}>
-              {ACTIVITY.map((a, i) => (
-                <div key={i} className="row gap10" style={{ padding: '9px 0', borderBottom: i < ACTIVITY.length - 1 ? '1px solid var(--border)' : 0, alignItems: 'flex-start' }}>
+              {d.activity.length === 0 ? (
+                <div className="muted" style={{ fontSize: 13, padding: '12px 0' }}>No stock movements recorded yet.</div>
+              ) : d.activity.map((a, i) => (
+                <div key={i} className="row gap10" style={{ padding: '9px 0', borderBottom: i < d.activity.length - 1 ? '1px solid var(--border)' : 0, alignItems: 'flex-start' }}>
                   <IconTile tone={`tile-${a.tone}`} size={28} icon={a.icon} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, lineHeight: 1.4 }}><b>{a.who}</b> <span className="muted">{a.act}</span></div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Icon, Button, Badge, KpiCard, Card, Select, Drawer, IconTile, useToast } from './ui'
 import { PURCHASES, SUPPLIERS, money, money2, type Purchase } from '@/lib/erp-data'
 
@@ -81,12 +81,26 @@ function PurchaseDrawer({ bill, onClose }: { bill: Purchase; onClose: () => void
   )
 }
 
-export function Purchases() {
+export function Purchases({
+  prefillQuery,
+  prefillKey,
+  onPrefillConsumed,
+}: {
+  prefillQuery?: string
+  prefillKey?: number
+  onPrefillConsumed?: () => void
+} = {}) {
   const toast = useToast()
   const [q, setQ] = useState('')
   const [sup, setSup] = useState('all')
   const [status, setStatus] = useState('all')
   const [open, setOpen] = useState<Purchase | null>(null)
+
+  useEffect(() => {
+    if (!prefillQuery || prefillKey == null) return
+    setQ(prefillQuery)
+    onPrefillConsumed?.()
+  }, [prefillKey, prefillQuery, onPrefillConsumed])
 
   const all = PURCHASES.map(p => ({ ...p, total: p.sub + p.gst }))
   const billedCount = all.filter(p => p.status === 'billed').length

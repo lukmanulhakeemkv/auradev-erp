@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { Icon } from './ui'
 import { Avatar } from './ui'
 import { useAuth } from '@/lib/auth-context'
@@ -120,10 +121,10 @@ export function Topbar({
         <span className="crumb">{meta.crumb}</span>
       </div>
       <div className="spacer" />
-      <button className="cmd-trigger" onClick={onCmd}>
+      <button className="cmd-trigger" onClick={onCmd} type="button" aria-label="Open search">
         <Icon name="search" size={15} />
-        <span>Search products, bills…</span>
-        <span className="kbd">⌘K</span>
+        <span className="cmd-trigger-label">Search products, bills…</span>
+        {/* <span className="kbd cmd-kbd">{searchKbd}</span> */}
       </button>
       <button className="icon-btn" aria-label="Notifications">
         <Icon name="bell" size={18} /><span className="dot" />

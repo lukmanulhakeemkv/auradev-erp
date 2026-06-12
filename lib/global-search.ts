@@ -1,0 +1,96 @@
+import type { ViewId } from '@/components/erp/shell'
+import { PURCHASES } from './erp-data'
+import { fetchGlobalSearch } from './search-api'
+
+export type SearchResultKind = 'page' | 'product' | 'bill' | 'purchase' | 'category'
+
+export interface SearchResult {
+  id: string
+  kind: SearchResultKind
+  label: string
+  sub: string
+  icon: string
+  view: ViewId
+  query?: string
+}
+
+const PAGES: SearchResult[] = [
+  { id: 'page-dashboard', kind: 'page', label: 'Dashboard', sub: 'Operations · Overview', icon: 'layout-dashboard', view: 'dashboard' },
+  { id: 'page-pos', kind: 'page', label: 'Billing / POS', sub: 'Operations · Counter', icon: 'scan-line', view: 'pos' },
+  { id: 'page-inventory', kind: 'page', label: 'Inventory', sub: 'Operations · Stock', icon: 'boxes', view: 'inventory' },
+  { id: 'page-purchases', kind: 'page', label: 'Purchases', sub: 'Procurement · Supplier bills', icon: 'truck', view: 'purchases' },
+  { id: 'page-settings', kind: 'page', label: 'Settings', sub: 'Administration', icon: 'settings', view: 'settings' },
+]
+
+const API_HIT_MAP: Record<string, { kind: SearchResultKind; icon: string; view: ViewId }> = {
+  PRODUCT: { kind: 'product', icon: 'package', view: 'inventory' },
+  BILL: { kind: 'bill', icon: 'receipt', view: 'dashboard' },
+  CATEGORY: { kind: 'category', icon: 'tag', view: 'inventory' },
+}
+
+export function searchPages(q: string): SearchResult[] {
+  const lq = q.toLowerCase().trim()
+  if (!lq) return PAGES
+  return PAGES.filter(p =>
+    p.label.toLowerCase().includes(lq) ||
+    p.sub.toLowerCase().includes(lq),
+  )
+}
+
+export function searchPurchases(q: string): SearchResult[] {
+  const lq = q.toLowerCase().trim()
+  if (!lq) return []
+  return PURCHASES
+    .filter(p => p.no.toLowerCase().includes(lq) || p.sup.toLowerCase().includes(lq))
+    .slice(0, 6)
+    .map(p => ({
+      id: `purchase-${p.no}`,
+      kind: 'purchase' as const,
+      label: p.no,
+      sub: p.sup,
+      icon: 'truck',
+      view: 'purchases' as ViewId,
+      query: p.no,
+    }))
+}
+
+export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
+  const trimmed = q.trim()
+  const pages = searchPages(trimmed)
+
+  if (!trimmed) return pages
+
+  const [apiHits, purchases] = await Promise.all([
+    fetchGlobalSearch(trimmed, 12).catch(() => []),
+    Promise.resolve(searchPurchases(trimmed)),
+  ])
+
+  const apiResults: SearchResult[] = apiHits.flatMap(hit => {
+    const mapped = API_HIT_MAP[hit.type]
+    if (!mapped) return []
+    return [{
+      id: `${mapped.kind}-${hit.id}`,
+      kind: mapped.kind,
+      label: hit.label,
+      sub: hit.subtitle,
+      icon: mapped.icon,
+      view: mapped.view,
+      query: hit.query || hit.label,
+    }]
+  })
+
+  const pageHits = pages.slice(0, 3)
+  return [...pageHits, ...apiResults, ...purchases]
+}
+
+export const SEARCH_GROUP_LABEL: Record<SearchResultKind, string> = {
+  page: 'Pages',
+  product: 'Products',
+  bill: 'Sales bills',
+  purchase: 'Purchase bills',
+  category: 'Categories',
+}
+
+export const SEARCH_GROUP_ORDER: SearchResultKind[] = [
+  'page', 'product', 'category', 'bill', 'purchase',
+]
