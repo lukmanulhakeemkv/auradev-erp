@@ -64,14 +64,9 @@ function AppInner() {
           onSelect={handleSearchSelect}
         />
         <div className={'content' + (isPOS ? ' pos-mode' : '')}>
-          {view === 'dashboard' && <Dashboard setView={(v) => setView(v as ViewId)} />}
-          {view === 'pos' && (
-            <POS
-              prefillQuery={prefill?.view === 'pos' ? prefill.q : undefined}
-              prefillKey={prefill?.view === 'pos' ? prefill.key : undefined}
-              onPrefillConsumed={() => setPrefill(null)}
-            />
-          )}
+          <div className="dashboard-mount" style={{ display: view === 'dashboard' ? 'block' : 'none' }}>
+            <Dashboard setView={(v) => setView(v as ViewId)} active={view === 'dashboard'} />
+          </div>
           {view === 'inventory' && (
             <Inventory
               prefillQuery={prefill?.view === 'inventory' ? prefill.q : undefined}
@@ -87,6 +82,17 @@ function AppInner() {
             />
           )}
           {view === 'settings'  && <Settings />}
+          <div
+            className="pos-mount"
+            style={{ display: isPOS ? 'flex' : 'none' }}
+          >
+            <POS
+              active={isPOS}
+              prefillQuery={prefill?.view === 'pos' ? prefill.q : undefined}
+              prefillKey={prefill?.view === 'pos' ? prefill.key : undefined}
+              onPrefillConsumed={() => setPrefill(null)}
+            />
+          </div>
         </div>
       </div>
     </div>

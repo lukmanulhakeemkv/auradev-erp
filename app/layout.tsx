@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { AuthProvider } from '@/lib/auth-context'
+import { QueryProvider } from '@/lib/query-provider'
 import './globals.css'
 
 const inter = Inter({
@@ -26,7 +27,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} h-full`}>
       <body className="h-full antialiased">
-          <AuthProvider>{children}</AuthProvider>
+          <QueryProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </QueryProvider>
         </body>
     </html>
   )

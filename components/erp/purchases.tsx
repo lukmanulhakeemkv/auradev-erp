@@ -146,7 +146,7 @@ export function Purchases({
       </div>
 
       <Card noBody>
-        <div style={{ padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+        <div className="filter-toolbar">
           <div className="input sm" style={{ width: 260 }}>
             <Icon name="search" size={14} />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search bill no. or supplier" />

@@ -173,6 +173,28 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product> {
   return mapProduct(p)
 }
 
+export async function fetchPosQuickPicks(limit = 12): Promise<Product[]> {
+  const rows = await apiFetch<ApiProduct[]>(`/api/v1/products/pos/quick-picks?limit=${limit}`)
+  return rows.map(mapProduct)
+}
+
+/** Resolve a scanner input via barcode API, then SKU/exact search fallback. */
+export async function resolveProductScan(code: string): Promise<Product> {
+  const trimmed = code.trim()
+  if (!trimmed) throw new Error('Empty scan code')
+  try {
+    return await fetchProductByBarcode(trimmed)
+  } catch {
+    const hits = await searchProducts(trimmed, 8)
+    const exact = hits.find(
+      p => p.sku.toLowerCase() === trimmed.toLowerCase() || p.barcode === trimmed,
+    )
+    if (exact) return exact
+    if (hits.length === 1) return hits[0]
+    throw new Error(`No product for "${trimmed}"`)
+  }
+}
+
 export async function createProduct(f: ProductFormData): Promise<Product> {
   const created = await apiFetch<ApiProduct>('/api/v1/products', {
     method: 'POST',

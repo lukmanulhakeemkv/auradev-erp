@@ -1,12 +1,27 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Icon, Button, Badge, Field, TextInput, Select, Segmented, Modal, IconTile, useToast } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, money2, type Product } from '@/lib/erp-data'
-import { fetchProducts, fetchProductByBarcode } from '@/lib/inventory-api'
-import { fetchCustomers, createBill, type ApiCustomer, type SavedBill } from '@/lib/billing-api'
+import { resolveProductScan, fetchProduct } from '@/lib/inventory-api'
+import {
+  createBill,
+  holdBill as holdBillApi,
+  fetchHeldBill,
+  completeHeldBill,
+  discardHeldBill,
+  type ApiCustomer,
+  type SavedBill,
+  type HeldBillSummary,
+} from '@/lib/billing-api'
 import { saveReceiptPng, saveReceiptPdf, DEFAULT_RECEIPT_META } from '@/lib/receipt-export'
-import { useAuth } from '@/lib/auth-context'
+import { useInvalidateCatalog } from '@/lib/queries/use-catalog'
+import { useCustomersQuery } from '@/lib/queries/use-customers'
+import { useInvalidateDashboard } from '@/lib/queries/use-dashboard'
+import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
+import { usePosQuickPicksQuery, useInvalidatePos } from '@/lib/queries/use-pos-quick-picks'
+import { useHeldBillsQuery, useInvalidateHeldBills } from '@/lib/queries/use-held-bills'
+import { mergeQuickPicks, pushPosRecent, readPosRecents } from '@/lib/pos-recent'
 
 interface CartItem { p: Product; qty: number; disc: number }
 
@@ -87,7 +102,7 @@ function PaymentModal({ total, customer, onClose, onDone, busy }: {
           <div className="pay-summary">
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Tendered</span><span className="tnum">{money2(tend)}</span></div>
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Due</span><span className="tnum">{money2(total)}</span></div>
-            <div className="divider" style={{ margin: '8px 0' }} />
+            <div className="divider" style={{ margin: '6px 0' }} />
             <div className="row" style={{ justifyContent: 'space-between', fontSize: 18, fontWeight: 700 }}>
               <span>Change</span><span className="tnum" style={{ color: 'var(--success-fg)' }}>{money2(change)}</span>
             </div>
@@ -192,25 +207,104 @@ function ReceiptModal({ bill, onClose }: { bill: SavedBill; onClose: () => void 
   )
 }
 
+function ParkedBillsModal({
+  bills,
+  loading,
+  onClose,
+  onResume,
+  onDiscard,
+  busyId,
+}: {
+  bills: HeldBillSummary[]
+  loading: boolean
+  onClose: () => void
+  onResume: (id: string) => void
+  onDiscard: (id: string) => void
+  busyId: string | null
+}) {
+  return (
+    <Modal title="Parked bills" sub="Resume a parked sale or discard it" icon="pause" onClose={onClose} wide
+      footer={<Button variant="ghost" onClick={onClose}>Close</Button>}
+    >
+      {loading ? (
+        <div className="empty" style={{ padding: '28px 0' }}>
+          <Icon name="loader" size={22} />
+          <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading parked bills…</div>
+        </div>
+      ) : bills.length === 0 ? (
+        <div className="empty" style={{ padding: '28px 0' }}>
+          <div className="ei"><Icon name="pause" size={22} /></div>
+          <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No parked bills</div>
+          <div>Use Hold to park the current cart when another customer needs checkout first.</div>
+        </div>
+      ) : (
+        <div className="parked-list">
+          {bills.map(b => (
+            <div className="parked-row" key={b.id}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{b.customerName}</div>
+                <div className="td-sub mono">{b.billNo} · {b.itemCount} item{b.itemCount === 1 ? '' : 's'}</div>
+              </div>
+              <div className="tnum" style={{ fontWeight: 700, fontSize: 14 }}>{money2(b.grandTotal)}</div>
+              <div className="row gap6">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon="play"
+                  disabled={busyId != null}
+                  onClick={() => onResume(b.id)}
+                >
+                  Resume
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon="trash-2"
+                  disabled={busyId != null}
+                  onClick={() => onDiscard(b.id)}
+                >
+                  Discard
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 export function POS({
+  active = true,
   prefillQuery,
   prefillKey,
   onPrefillConsumed,
 }: {
+  active?: boolean
   prefillQuery?: string
   prefillKey?: number
   onPrefillConsumed?: () => void
 } = {}) {
-  const { user } = useAuth()
   const toast = useToast()
-  const [products, setProducts] = useState<Product[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const scannerRef = useRef<HTMLInputElement>(null)
+  const invalidateCatalog = useInvalidateCatalog()
+  const invalidateDashboard = useInvalidateDashboard()
+  const invalidatePos = useInvalidatePos()
+  const invalidateHeldBills = useInvalidateHeldBills()
+  const customersQuery = useCustomersQuery()
+  const quickPicksQuery = usePosQuickPicksQuery()
+  const heldBillsQuery = useHeldBillsQuery()
+  const customers = customersQuery.data ?? []
+  const heldBills = heldBillsQuery.data ?? []
   const [cart, setCart] = useState<CartItem[]>([])
-  const [cat, setCat] = useState('All')
-  const [q, setQ] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [barcode, setBarcode] = useState('')
-  const [customers, setCustomers] = useState<ApiCustomer[]>([])
+  const [scanBusy, setScanBusy] = useState(false)
+  const [holdBusy, setHoldBusy] = useState(false)
+  const [parkedBusyId, setParkedBusyId] = useState<string | null>(null)
+  const [heldBillId, setHeldBillId] = useState<string | null>(null)
+  const [parkedOpen, setParkedOpen] = useState(false)
   const [customerId, setCustomerId] = useState('')
   const [billDisc, setBillDisc] = useState(0)
   const [discMode, setDiscMode] = useState('₹')
@@ -218,76 +312,117 @@ export function POS({
   const [payOpen, setPayOpen] = useState(false)
   const [payBusy, setPayBusy] = useState(false)
   const [savedBill, setSavedBill] = useState<SavedBill | null>(null)
+  const [recents, setRecents] = useState<Product[]>([])
 
-  async function loadProducts() {
-    setLoading(true)
-    setError(null)
-    try {
-      const [prods, custs] = await Promise.all([fetchProducts(), fetchCustomers()])
-      setProducts(prods)
-      setCustomers(custs)
-      if (!customerId && custs.length) {
-        const walkin = custs.find(c => c.type === 'walkin') ?? custs[0]
-        setCustomerId(walkin.id)
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load products')
-    } finally {
-      setLoading(false)
-    }
+  const searchQuery = usePosSearchQuery(debouncedQ)
+  const isSearching = debouncedQ.length >= 2
+  const searchResults = searchQuery.data ?? []
+
+  const customersLoading = customersQuery.isPending
+  const customersError = customersQuery.error?.message ?? null
+  const picksLoading = quickPicksQuery.isPending
+  const picksError = quickPicksQuery.error?.message ?? null
+
+  const quickPicks = useMemo(
+    () => mergeQuickPicks(recents, quickPicksQuery.data ?? []),
+    [recents, quickPicksQuery.data],
+  )
+
+  const focusScanner = useCallback(() => {
+    requestAnimationFrame(() => {
+      scannerRef.current?.focus({ preventScroll: true })
+    })
+  }, [])
+
+  const scannerReady = active && !payOpen && !savedBill
+
+  useEffect(() => {
+    if (scannerReady) focusScanner()
+  }, [scannerReady, focusScanner])
+
+  useEffect(() => {
+    if (scannerReady && !scanBusy) focusScanner()
+  }, [scanBusy, scannerReady, focusScanner])
+
+  function refetch() {
+    void customersQuery.refetch()
+    void quickPicksQuery.refetch()
+    if (isSearching) void searchQuery.refetch()
   }
 
   useEffect(() => {
-    if (!user) return
-    loadProducts()
-  }, [user])
+    setRecents(readPosRecents())
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchInput.trim()), 300)
+    return () => clearTimeout(t)
+  }, [searchInput])
+
+  useEffect(() => {
+    if (customerId || !customers.length) return
+    const walkin = customers.find(c => c.type === 'walkin') ?? customers[0]
+    if (walkin) setCustomerId(walkin.id)
+  }, [customers, customerId])
 
   useEffect(() => {
     if (!prefillQuery || prefillKey == null) return
-    setQ(prefillQuery)
-    setCat('All')
+    setSearchInput(prefillQuery)
     onPrefillConsumed?.()
   }, [prefillKey, prefillQuery, onPrefillConsumed])
 
   const customer = customers.find(c => c.id === customerId)
-  const cats = ['All', ...Array.from(new Set(products.map(p => p.cat)))]
-  const filtered = products.filter(p =>
-    (cat === 'All' || p.cat === cat) &&
-    (!q || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))
-  )
 
   const add = useCallback((p: Product) => {
+    const step = p.unit === 'kg' ? 0.5 : 1
     setCart(c => {
       const ex = c.find(x => x.p.id === p.id)
-      if (ex) return c.map(x => x.p.id === p.id ? { ...x, qty: +(x.qty + (p.unit === 'kg' ? 0.5 : 1)).toFixed(2) } : x)
-      return [...c, { p, qty: 1, disc: 0 }]
+      const nextQty = ex ? +(ex.qty + step).toFixed(2) : step
+      if (nextQty > p.stock) {
+        toast(
+          p.stock <= 0
+            ? `${p.name} is out of stock`
+            : `${p.name} — only ${p.stock}${p.unit === 'kg' ? ' kg' : ''} available`,
+          { icon: 'alert-circle' },
+        )
+        return c
+      }
+      pushPosRecent(p)
+      setRecents(readPosRecents())
+      if (ex) return c.map(x => x.p.id === p.id ? { ...x, qty: nextQty } : x)
+      return [...c, { p, qty: step === 0.5 ? step : 1, disc: 0 }]
     })
-  }, [])
+  }, [toast])
 
   const setQty = (id: string, qty: number) =>
-    setCart(c => c.map(x => x.p.id === id ? { ...x, qty: Math.max(0, +qty.toFixed(2)) } : x).filter(x => x.qty > 0))
+    setCart(c => {
+      const line = c.find(x => x.p.id === id)
+      if (line && qty > line.p.stock) {
+        toast(
+          `${line.p.name} — only ${line.p.stock}${line.p.unit === 'kg' ? ' kg' : ''} available`,
+          { icon: 'alert-circle' },
+        )
+        return c
+      }
+      return c.map(x => x.p.id === id ? { ...x, qty: Math.max(0, +qty.toFixed(2)) } : x).filter(x => x.qty > 0)
+    })
   const remove = (id: string) => setCart(c => c.filter(x => x.p.id !== id))
 
   async function onBarcode(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter') return
+    if (e.key !== 'Enter' || scanBusy) return
     const code = barcode.trim()
     if (!code) return
     setBarcode('')
-
-    const local = products.find(x => x.barcode === code || x.sku.toLowerCase() === code.toLowerCase())
-    if (local) {
-      add(local)
-      toast(local.name + ' added')
-      return
-    }
-
+    setScanBusy(true)
     try {
-      const p = await fetchProductByBarcode(code)
+      const p = await resolveProductScan(code)
       add(p)
-      setProducts(ps => ps.some(x => x.id === p.id) ? ps : [...ps, p])
       toast(p.name + ' added')
     } catch {
       toast(`No product for "${code}"`, { icon: 'search-x', tone: '' })
+    } finally {
+      setScanBusy(false)
+      focusScanner()
     }
   }
 
@@ -296,40 +431,55 @@ export function POS({
   const discVal = discMode === '%' ? subtotal * (billDisc || 0) / 100 : (billDisc || 0)
   const grand = Math.max(0, subtotal - discVal + gst)
 
+  function cartPayload() {
+    return {
+      customerId,
+      discountMode: (discMode === '%' ? 'PERCENT' : 'AMOUNT') as 'AMOUNT' | 'PERCENT',
+      billDiscount: billDisc || 0,
+      items: cart.map(x => ({
+        productId: x.p.id,
+        quantity: x.qty,
+        lineDiscount: x.disc || 0,
+      })),
+    }
+  }
+
+  function resetCart() {
+    setCart([])
+    setBillDisc(0)
+    setHeldBillId(null)
+    const walkin = customers.find(c => c.type === 'walkin')
+    if (walkin) setCustomerId(walkin.id)
+  }
+
   async function completeSale(method: string, tendered: number, splitCash: number) {
     if (!customerId || !cart.length) return
     setPayBusy(true)
     try {
       const payMethod = (method === 'Split' ? 'CASH' : method.toUpperCase()) as 'CASH' | 'UPI' | 'CARD' | 'CREDIT'
-      const bill = await createBill({
-        customerId,
-        discountMode: discMode === '%' ? 'PERCENT' : 'AMOUNT',
-        billDiscount: billDisc || 0,
-        items: cart.map(x => ({
-          productId: x.p.id,
-          quantity: x.qty,
-          lineDiscount: x.disc || 0,
-        })),
+      const payload = {
+        ...cartPayload(),
         payment: {
           method: payMethod,
           tendered: method === 'Cash' ? tendered : undefined,
           splitCashAmount: method === 'Split' && splitCash > 0 ? splitCash : undefined,
         },
-      })
+      }
+      const bill = heldBillId
+        ? await completeHeldBill(heldBillId, payload)
+        : await createBill(payload)
 
-      setProducts(ps => ps.map(p => {
-        const sold = cart.find(x => x.p.id === p.id)
-        return sold ? { ...p, stock: Math.max(0, +(p.stock - sold.qty).toFixed(3)) } : p
-      }))
+      void invalidateCatalog.products()
+      void invalidatePos.quickPicks()
+      void invalidateHeldBills()
+      void invalidateDashboard()
 
-      const walkin = customers.find(c => c.type === 'walkin')
       setPayOpen(false)
-      setCart([])
-      setBillDisc(0)
-      if (walkin) setCustomerId(walkin.id)
+      resetCart()
       setSavedBill(bill)
       void saveReceiptPng(bill, DEFAULT_RECEIPT_META)
       toast(`Bill ${bill.billNo} saved · stock updated`, { icon: 'receipt' })
+      focusScanner()
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to complete sale'
       toast(msg, { icon: 'alert-circle' })
@@ -338,15 +488,72 @@ export function POS({
     }
   }
 
-  function holdBill() {
-    if (!cart.length) return
-    toast('Hold bill is not synced to server yet', { icon: 'pause' })
+  async function holdBill() {
+    if (!customerId || !cart.length || holdBusy) return
+    setHoldBusy(true)
+    try {
+      const held = await holdBillApi(cartPayload())
+      resetCart()
+      void invalidateHeldBills()
+      toast(`Bill parked · ${held.billNo}`, { icon: 'pause' })
+      focusScanner()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to park bill'
+      toast(msg, { icon: 'alert-circle' })
+    } finally {
+      setHoldBusy(false)
+    }
   }
+
+  async function resumeHeldBill(id: string) {
+    if (parkedBusyId) return
+    if (cart.length && heldBillId !== id) {
+      toast('Park or clear the current cart before resuming another bill', { icon: 'alert-triangle' })
+      return
+    }
+    setParkedBusyId(id)
+    try {
+      const bill = await fetchHeldBill(id)
+      const products = await Promise.all(bill.lines.map(l => fetchProduct(l.productId)))
+      setCart(bill.lines.map((l, i) => ({
+        p: products[i],
+        qty: l.quantity,
+        disc: l.lineDiscount,
+      })))
+      setCustomerId(bill.customerId)
+      setBillDisc(bill.billDiscount)
+      setDiscMode(bill.discountMode === 'PERCENT' ? '%' : '₹')
+      setHeldBillId(bill.id)
+      setParkedOpen(false)
+      toast(`Resumed ${bill.billNo}`, { icon: 'play' })
+      focusScanner()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to resume bill'
+      toast(msg, { icon: 'alert-circle' })
+    } finally {
+      setParkedBusyId(null)
+    }
+  }
+
+  async function discardParkedBill(id: string) {
+    if (parkedBusyId) return
+    setParkedBusyId(id)
+    try {
+      await discardHeldBill(id)
+      if (heldBillId === id) resetCart()
+      void invalidateHeldBills()
+      toast('Parked bill discarded', { icon: 'trash-2' })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to discard bill'
+      toast(msg, { icon: 'alert-circle' })
+    } finally {
+      setParkedBusyId(null)
+    }
+  }
+
   function clearBill() {
-    setCart([])
-    setBillDisc(0)
-    const walkin = customers.find(c => c.type === 'walkin')
-    if (walkin) setCustomerId(walkin.id)
+    resetCart()
+    focusScanner()
   }
 
   useEffect(() => {
@@ -360,6 +567,9 @@ export function POS({
 
   const dense = layout === 'wide'
   const cartFirst = layout === 'cartLeft'
+  const displayProducts = isSearching ? searchResults : quickPicks
+  const panelLoading = isSearching ? searchQuery.isFetching : picksLoading || customersLoading
+  const panelError = isSearching ? searchQuery.error?.message : picksError ?? customersError
 
   const cartPanel = (
     <div className="pos-cart" style={{ order: cartFirst ? 0 : 2 }}>
@@ -376,19 +586,25 @@ export function POS({
             icon: c.type === 'b2b' ? 'building-2' : 'user-round',
           }))}
         />
+        {heldBillId && (
+          <div className="pos-parked-tag">
+            <Icon name="pause" size={12} />
+            <span>Resuming parked bill</span>
+          </div>
+        )}
       </div>
       <div className="pos-lines">
         {cart.length === 0 ? (
           <div className="empty" style={{ height: '100%' }}>
             <div className="ei"><Icon name="shopping-cart" size={22} /></div>
             <div style={{ fontWeight: 600, color: 'var(--fg)' }}>Cart is empty</div>
-            <div>Scan a barcode or tap a product to begin</div>
+            <div>Scan a barcode or search to add items</div>
           </div>
         ) : cart.map(x => (
           <div className="cart-line" key={x.p.id}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="cl-name">{x.p.name}</div>
-              <div className="td-sub tnum">{money(x.p.price)} × {x.qty}{x.p.unit === 'kg' ? ' kg' : ''} · GST {x.p.tax}%</div>
+              <div className="cl-meta tnum">{money(x.p.price)} × {x.qty}{x.p.unit === 'kg' ? ' kg' : ''} · GST {x.p.tax}%</div>
             </div>
             <div className="qty">
               <button onClick={() => setQty(x.p.id, x.qty - (x.p.unit === 'kg' ? 0.5 : 1))}><Icon name="minus" size={13} /></button>
@@ -401,9 +617,9 @@ export function POS({
         ))}
       </div>
       <div className="pos-totals">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="pos-discount-row">
           <span className="muted">Bill discount</span>
-          <div className="row gap6">
+          <div className="row gap6" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <div className="seg" style={{ padding: 2 }}>
               {['₹', '%'].map(m => (
                 <button key={m} className={discMode === m ? 'on' : ''} style={{ padding: '3px 9px' }} onClick={() => setDiscMode(m)}>{m}</button>
@@ -419,27 +635,66 @@ export function POS({
         <div className="t-row"><span className="muted">GST</span><span className="tnum">{money2(gst)}</span></div>
         <div className="divider" style={{ margin: '6px 0' }} />
         <div className="t-row grand"><span>Total</span><span className="tnum">{money2(grand)}</span></div>
-        <div className="row gap8" style={{ marginTop: 12 }}>
-          <Button variant="outline" size="sm" icon="pause" onClick={holdBill}>Hold</Button>
-          <Button variant="outline" size="sm" icon="trash-2" onClick={clearBill}>Clear</Button>
-          <Button variant="primary" className="block" icon="wallet" disabled={!cart.length} onClick={() => setPayOpen(true)} style={{ flex: 1 }}>
-            Pay {money(grand)} <span className="kbd" style={{ marginLeft: 4 }}>F8</span>
+        <div className="pos-cart-actions">
+          <Button variant="outline" size="sm" icon="pause" disabled={!cart.length || holdBusy} onClick={holdBill}>
+            {holdBusy ? '…' : 'Hold'}
           </Button>
+          <Button variant="outline" size="sm" icon="list" onClick={() => setParkedOpen(true)}>
+            Parked{heldBills.length ? ` (${heldBills.length})` : ''}
+          </Button>
+          <Button variant="outline" size="sm" icon="trash-2" onClick={clearBill}>Clear</Button>
         </div>
+        <Button variant="primary" className="block pos-pay-btn" icon="wallet" disabled={!cart.length} onClick={() => setPayOpen(true)}>
+          Pay {money(grand)} <span className="kbd" style={{ marginLeft: 4 }}>F8</span>
+        </Button>
       </div>
     </div>
   )
 
   const productPanel = (
-    <div className="pos-products" style={{ order: 1 }}>
+    <div
+      className="pos-products"
+      style={{ order: 1 }}
+      onMouseDown={e => {
+        const t = e.target as HTMLElement
+        if (scannerReady && !t.closest('.pos-search-input') && !t.closest('button') && !t.closest('.seg')) {
+          focusScanner()
+        }
+      }}
+    >
       <div className="pos-toolbar">
-        <div className="input pill" style={{ flex: 1, maxWidth: 360 }}>
+        <div className="input pill pos-scanner-wrap" style={{ flex: 1, maxWidth: 360 }}>
           <Icon name="scan-barcode" size={16} />
-          <input value={barcode} onChange={e => setBarcode(e.target.value)} onKeyDown={onBarcode} placeholder="Scan barcode / SKU, then Enter" />
+          <input
+            ref={scannerRef}
+            className="pos-scanner-input"
+            value={barcode}
+            onChange={e => setBarcode(e.target.value)}
+            onKeyDown={onBarcode}
+            onBlur={() => {
+              if (!scannerReady) return
+              window.setTimeout(() => {
+                const el = document.activeElement
+                if (el?.classList.contains('pos-search-input')) return
+                if (payOpen || savedBill) return
+                focusScanner()
+              }, 0)
+            }}
+            placeholder="Scan barcode / SKU, then Enter"
+            disabled={scanBusy}
+            autoComplete="off"
+            spellCheck={false}
+          />
         </div>
-        <div className="input pill" style={{ flex: 1, maxWidth: 300 }}>
+        <div className="input pill" style={{ flex: 1, maxWidth: 320 }}>
           <Icon name="search" size={16} />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search products" />
+          <input
+            className="pos-search-input"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            placeholder="Search name, SKU, or barcode (min 2 chars)"
+            autoComplete="off"
+          />
         </div>
         <div style={{ flex: 1 }} />
         <Segmented
@@ -452,30 +707,48 @@ export function POS({
           ]}
         />
       </div>
-      <div className="chips" style={{ padding: '0 0 4px' }}>
-        {cats.map(c => (
-          <button key={c} className={'chip' + (cat === c ? ' on' : '')} onClick={() => setCat(c)}>{c}</button>
-        ))}
-      </div>
+
+      {!isSearching && (
+        <div className="pos-picks-head">
+          <span className="pos-picks-label">
+            {recents.length ? 'Recent & quick picks' : 'Quick picks'}
+          </span>
+          {scanBusy && <span className="muted" style={{ fontSize: 12 }}><Icon name="loader" size={13} /> Looking up scan…</span>}
+        </div>
+      )}
+      {isSearching && (
+        <div className="pos-picks-head">
+          <span className="pos-picks-label">Search results</span>
+          {searchQuery.isFetching && <span className="muted" style={{ fontSize: 12 }}><Icon name="loader" size={13} /> Searching…</span>}
+        </div>
+      )}
+
       <div className="prod-grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${dense ? 132 : 158}px, 1fr))` }}>
-        {loading ? (
+        {panelLoading && displayProducts.length === 0 ? (
           <div className="empty" style={{ gridColumn: '1/-1' }}>
             <Icon name="loader" size={22} />
-            <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading products…</div>
+            <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading…</div>
           </div>
-        ) : error ? (
+        ) : panelError ? (
           <div className="empty" style={{ gridColumn: '1/-1' }}>
             <div className="ei"><Icon name="alert-circle" size={22} /></div>
-            <div style={{ fontWeight: 600, color: 'var(--danger-fg)' }}>{error}</div>
-            <Button size="sm" variant="outline" icon="refresh-cw" onClick={loadProducts} style={{ marginTop: 10 }}>Retry</Button>
+            <div style={{ fontWeight: 600, color: 'var(--danger-fg)' }}>{panelError}</div>
+            <Button size="sm" variant="outline" icon="refresh-cw" onClick={refetch} style={{ marginTop: 10 }}>Retry</Button>
           </div>
         ) : (
           <>
-            {filtered.map(p => <ProductCard key={p.id} p={p} onAdd={add} dense={dense} />)}
-            {filtered.length === 0 && (
-              <div className="empty" style={{ gridColumn: '1/-1' }}>
-                <div className="ei"><Icon name="search-x" size={22} /></div>
-                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No products found</div>
+            {displayProducts.map(p => <ProductCard key={p.id} p={p} onAdd={add} dense={dense} />)}
+            {displayProducts.length === 0 && (
+              <div className="empty pos-empty-start" style={{ gridColumn: '1/-1' }}>
+                <div className="ei"><Icon name={isSearching ? 'search-x' : 'scan-barcode'} size={22} /></div>
+                <div style={{ fontWeight: 600, color: 'var(--fg)' }}>
+                  {isSearching ? 'No products found' : 'Scan to start'}
+                </div>
+                <div className="muted" style={{ fontSize: 12.5, maxWidth: 320, textAlign: 'center' }}>
+                  {isSearching
+                    ? 'Try a different name, SKU, or barcode.'
+                    : 'Use the scanner field or search above. Quick picks appear after your first sale or when items are added.'}
+                </div>
               </div>
             )}
           </>
@@ -497,6 +770,16 @@ export function POS({
         />
       )}
       {savedBill && <ReceiptModal bill={savedBill} onClose={() => setSavedBill(null)} />}
+      {parkedOpen && (
+        <ParkedBillsModal
+          bills={heldBills}
+          loading={heldBillsQuery.isPending}
+          onClose={() => setParkedOpen(false)}
+          onResume={resumeHeldBill}
+          onDiscard={discardParkedBill}
+          busyId={parkedBusyId}
+        />
+      )}
     </div>
   )
 }
