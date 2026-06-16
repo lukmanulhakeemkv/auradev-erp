@@ -1,74 +1,61 @@
-import type { SavedBill } from './billing-api'
-
-export interface ReceiptMeta {
-  storeName?: string
-  storePhone?: string
-  logoUrl?: string
-}
-
-export const DEFAULT_RECEIPT_META: ReceiptMeta = {
-  storeName: 'Nenjankod Supermarket',
-  storePhone: '0820 256 7711',
-  logoUrl: '/logo.jpeg',
-}
+import type { PurchaseDetail } from './purchases-api'
+import { statusLabel } from './purchases-api'
+import { DEFAULT_RECEIPT_META, type ReceiptMeta } from './receipt-export'
 
 function money(n: number): string {
   return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('en-IN', {
+  const d = iso.includes('T') ? iso : iso + 'T00:00:00'
+  return new Date(d).toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
-    hour: 'numeric', minute: '2-digit',
   })
 }
 
-function receiptLines(bill: SavedBill, meta: ReceiptMeta): string[] {
+function purchaseLines(purchase: PurchaseDetail, meta: ReceiptMeta): string[] {
   const lines: string[] = [
     meta.storeName ?? DEFAULT_RECEIPT_META.storeName!,
     meta.storePhone ?? DEFAULT_RECEIPT_META.storePhone!,
     '--------------------------------',
-    `Bill  ${bill.billNo}`,
-    formatDate(bill.createdAt),
-    `Customer: ${bill.customerName}`,
-    `Cashier: ${bill.cashierName}`,
+    'SUPPLIER PURCHASE BILL',
+    `No.  ${purchase.purchaseNo}`,
+    `Date  ${formatDate(purchase.billDate)}`,
+    purchase.dueDate ? `Due   ${formatDate(purchase.dueDate)}` : '',
+    `Status  ${statusLabel(purchase.status)}`,
     '--------------------------------',
+    `Supplier: ${purchase.supplierName}`,
   ]
-  for (const line of bill.lines) {
+  if (purchase.supplierGstin) lines.push(`GSTIN: ${purchase.supplierGstin}`)
+  if (purchase.supplierPhone) lines.push(`Phone: ${purchase.supplierPhone}`)
+  lines.push('--------------------------------')
+  for (const line of purchase.lines) {
     lines.push(line.name)
-    lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)}  ${money(line.lineTotal)}`)
+    lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.rate)}  ${money(line.lineTotal)}`)
   }
   lines.push('--------------------------------')
-  lines.push(`Subtotal${' '.repeat(18)}${money(bill.subtotal)}`)
-  if (bill.billDiscount > 0) {
-    lines.push(`Discount${' '.repeat(18)}-${money(bill.billDiscount)}`)
-  }
-  lines.push(`CGST${' '.repeat(20)}${money(bill.cgstTotal)}`)
-  lines.push(`SGST${' '.repeat(20)}${money(bill.sgstTotal)}`)
-  lines.push(`TOTAL${' '.repeat(19)}${money(bill.grandTotal)}`)
-  lines.push(`Paid via ${bill.paymentMethod}`)
-  if (bill.tendered != null) {
-    lines.push(`Tendered${' '.repeat(17)}${money(bill.tendered)}`)
-  }
-  if (bill.changeDue != null && bill.changeDue > 0) {
-    lines.push(`Change${' '.repeat(19)}${money(bill.changeDue)}`)
+  lines.push(`Subtotal${' '.repeat(16)}${money(purchase.subtotal)}`)
+  lines.push(`GST${' '.repeat(20)}${money(purchase.gstTotal)}`)
+  lines.push(`TOTAL${' '.repeat(19)}${money(purchase.grandTotal)}`)
+  if (purchase.notes) {
+    lines.push('--------------------------------')
+    lines.push(`Note: ${purchase.notes}`)
   }
   lines.push('--------------------------------')
-  lines.push('Thank you! Visit again.')
-  return lines
+  return lines.filter(Boolean)
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`Failed to load receipt logo: ${src}`))
+    img.onerror = () => reject(new Error(`Failed to load logo: ${src}`))
     img.src = src
   })
 }
 
-async function renderCanvas(bill: SavedBill, meta: ReceiptMeta): Promise<HTMLCanvasElement> {
-  const lines = receiptLines(bill, meta)
+async function renderCanvas(purchase: PurchaseDetail, meta: ReceiptMeta): Promise<HTMLCanvasElement> {
+  const lines = purchaseLines(purchase, meta)
   const width = 320
   const lineHeight = 18
   const padding = 16
@@ -104,7 +91,8 @@ async function renderCanvas(bill: SavedBill, meta: ReceiptMeta): Promise<HTMLCan
 
   const textTop = padding + logoBlock
   lines.forEach((line, i) => {
-    ctx.font = i === 0 ? 'bold 14px sans-serif' : '13px monospace'
+    const isTitle = i === 0 || line === 'SUPPLIER PURCHASE BILL'
+    ctx.font = isTitle ? 'bold 14px sans-serif' : '13px monospace'
     ctx.fillText(line, padding, textTop + (i + 1) * lineHeight - 4)
   })
   return canvas
@@ -119,36 +107,36 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-export async function saveReceiptPng(bill: SavedBill, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(bill, meta)
+export async function savePurchaseJpeg(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
+  const canvas = await renderCanvas(purchase, meta)
   canvas.toBlob(blob => {
-    if (blob) downloadBlob(blob, `${bill.billNo}.png`)
-  }, 'image/png')
+    if (blob) downloadBlob(blob, `${purchase.purchaseNo}.jpg`)
+  }, 'image/jpeg', 0.92)
 }
 
-export async function saveReceiptPdf(bill: SavedBill, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(bill, meta)
+export async function savePurchasePdf(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
+  const canvas = await renderCanvas(purchase, meta)
   const imgData = canvas.toDataURL('image/png')
   const { jsPDF } = await import('jspdf')
   const widthMm = 80
   const heightMm = (canvas.height / canvas.width) * widthMm
   const pdf = new jsPDF({ unit: 'mm', format: [widthMm, heightMm], orientation: 'portrait' })
   pdf.addImage(imgData, 'PNG', 0, 0, widthMm, heightMm)
-  pdf.save(`${bill.billNo}.pdf`)
+  pdf.save(`${purchase.purchaseNo}.pdf`)
 }
 
-export async function printReceipt(bill: SavedBill, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(bill, meta)
+export async function printPurchase(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
+  const canvas = await renderCanvas(purchase, meta)
   const dataUrl = canvas.toDataURL('image/png')
   const win = window.open('', '_blank', 'noopener,noreferrer,width=360,height=720')
   if (!win) return
   win.document.write(`<!DOCTYPE html>
-<html><head><title>${bill.billNo}</title>
+<html><head><title>${purchase.purchaseNo}</title>
 <style>
   body { margin: 0; display: flex; justify-content: center; background: #fff; }
   img { width: 80mm; max-width: 100%; height: auto; }
   @media print { body { margin: 0; } img { width: 80mm; } }
 </style></head>
-<body><img src="${dataUrl}" alt="Receipt" onload="window.print(); window.close();" /></body></html>`)
+<body><img src="${dataUrl}" alt="Purchase bill" onload="window.print(); window.close();" /></body></html>`)
   win.document.close()
 }

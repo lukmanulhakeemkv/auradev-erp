@@ -5,7 +5,7 @@ import { Icon } from './ui'
 import { Avatar } from './ui'
 import { useAuth } from '@/lib/auth-context'
 
-export type ViewId = 'dashboard' | 'pos' | 'inventory' | 'purchases' | 'settings'
+export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'settings'
 
 type ToastFn = (msg: string, opts?: { icon?: string; tone?: string }) => void
 
@@ -14,6 +14,7 @@ const NAV = [
     label: 'Operations', items: [
       { id: 'dashboard' as ViewId, label: 'Dashboard', icon: 'layout-dashboard' },
       { id: 'pos' as ViewId, label: 'Billing / POS', icon: 'scan-line' },
+      { id: 'bills' as ViewId, label: 'Sales bills', icon: 'receipt' },
       { id: 'inventory' as ViewId, label: 'Inventory', icon: 'boxes', count: 4 },
     ],
   },
@@ -32,6 +33,7 @@ const NAV = [
 const VIEW_META: Record<ViewId, { title: string; crumb: string }> = {
   dashboard: { title: 'Dashboard', crumb: 'Operations · Overview' },
   pos: { title: 'Billing / POS', crumb: 'Operations · Counter 1' },
+  bills: { title: 'Sales bills', crumb: 'Operations · Bill history' },
   inventory: { title: 'Inventory', crumb: 'Operations · Stock' },
   purchases: { title: 'Purchases', crumb: 'Procurement · Supplier Bills' },
   settings: { title: 'Settings', crumb: 'Administration' },
@@ -121,11 +123,12 @@ export function Topbar({
         <span className="crumb">{meta.crumb}</span>
       </div>
       <div className="spacer" />
-      <button className="cmd-trigger" onClick={onCmd} type="button" aria-label="Open search">
-        <Icon name="search" size={15} />
-        <span className="cmd-trigger-label">Search products, bills…</span>
-        {/* <span className="kbd cmd-kbd">{searchKbd}</span> */}
-      </button>
+      {view !== 'pos' && (
+        <button className="cmd-trigger" onClick={onCmd} type="button" aria-label="Open search">
+          <Icon name="search" size={15} />
+          <span className="cmd-trigger-label">Search products, bills…</span>
+        </button>
+      )}
       <button className="icon-btn" aria-label="Notifications">
         <Icon name="bell" size={18} /><span className="dot" />
       </button>

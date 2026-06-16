@@ -16,6 +16,7 @@ import type { ViewId } from './shell'
 export interface GlobalSearchSelect {
   view: ViewId
   query?: string
+  billId?: string
 }
 
 function groupResults(results: SearchResult[]): [SearchResultKind, SearchResult[]][] {
@@ -89,7 +90,7 @@ export function GlobalSearch({
   }, [q, open])
 
   const pick = useCallback((r: SearchResult) => {
-    onSelect({ view: r.view, query: r.query })
+    onSelect({ view: r.view, query: r.query, billId: r.billId })
     onClose()
   }, [onSelect, onClose])
 

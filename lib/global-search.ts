@@ -1,6 +1,6 @@
 import type { ViewId } from '@/components/erp/shell'
-import { PURCHASES } from './erp-data'
 import { fetchGlobalSearch } from './search-api'
+import { fetchPurchases } from './purchases-api'
 
 export type SearchResultKind = 'page' | 'product' | 'bill' | 'purchase' | 'category'
 
@@ -12,11 +12,13 @@ export interface SearchResult {
   icon: string
   view: ViewId
   query?: string
+  billId?: string
 }
 
 const PAGES: SearchResult[] = [
   { id: 'page-dashboard', kind: 'page', label: 'Dashboard', sub: 'Operations · Overview', icon: 'layout-dashboard', view: 'dashboard' },
   { id: 'page-pos', kind: 'page', label: 'Billing / POS', sub: 'Operations · Counter', icon: 'scan-line', view: 'pos' },
+  { id: 'page-bills', kind: 'page', label: 'Sales bills', sub: 'Operations · Bill history', icon: 'receipt', view: 'bills' },
   { id: 'page-inventory', kind: 'page', label: 'Inventory', sub: 'Operations · Stock', icon: 'boxes', view: 'inventory' },
   { id: 'page-purchases', kind: 'page', label: 'Purchases', sub: 'Procurement · Supplier bills', icon: 'truck', view: 'purchases' },
   { id: 'page-settings', kind: 'page', label: 'Settings', sub: 'Administration', icon: 'settings', view: 'settings' },
@@ -24,7 +26,7 @@ const PAGES: SearchResult[] = [
 
 const API_HIT_MAP: Record<string, { kind: SearchResultKind; icon: string; view: ViewId }> = {
   PRODUCT: { kind: 'product', icon: 'package', view: 'inventory' },
-  BILL: { kind: 'bill', icon: 'receipt', view: 'dashboard' },
+  BILL: { kind: 'bill', icon: 'receipt', view: 'bills' },
   CATEGORY: { kind: 'category', icon: 'tag', view: 'inventory' },
 }
 
@@ -37,21 +39,23 @@ export function searchPages(q: string): SearchResult[] {
   )
 }
 
-export function searchPurchases(q: string): SearchResult[] {
+export async function searchPurchases(q: string): Promise<SearchResult[]> {
   const lq = q.toLowerCase().trim()
   if (!lq) return []
-  return PURCHASES
-    .filter(p => p.no.toLowerCase().includes(lq) || p.sup.toLowerCase().includes(lq))
-    .slice(0, 6)
-    .map(p => ({
-      id: `purchase-${p.no}`,
+  try {
+    const page = await fetchPurchases(lq, 'all', '', 0, 6)
+    return page.items.map(p => ({
+      id: `purchase-${p.id}`,
       kind: 'purchase' as const,
-      label: p.no,
-      sub: p.sup,
+      label: p.purchaseNo,
+      sub: p.supplierName,
       icon: 'truck',
       view: 'purchases' as ViewId,
-      query: p.no,
+      query: p.purchaseNo,
     }))
+  } catch {
+    return []
+  }
 }
 
 export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
@@ -62,7 +66,7 @@ export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
 
   const [apiHits, purchases] = await Promise.all([
     fetchGlobalSearch(trimmed, 12).catch(() => []),
-    Promise.resolve(searchPurchases(trimmed)),
+    searchPurchases(trimmed),
   ])
 
   const apiResults: SearchResult[] = apiHits.flatMap(hit => {
@@ -76,6 +80,7 @@ export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
       icon: mapped.icon,
       view: mapped.view,
       query: hit.query || hit.label,
+      billId: hit.type === 'BILL' ? hit.id : undefined,
     }]
   })
 

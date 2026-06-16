@@ -6,11 +6,12 @@ import {
 } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
-  fetchProducts, fetchProduct, fetchCategories, createProduct, updateProduct, adjustStock,
+  fetchProduct, createProduct, updateProduct, adjustStock,
   fetchMovements, movementLabel,
   type ProductFormData, type ApiCategory, type StockMovement,
 } from '@/lib/inventory-api'
-import { useAuth } from '@/lib/auth-context'
+import { useProductsQuery, useCategoriesQuery, useInvalidateCatalog } from '@/lib/queries/use-catalog'
+import { InventoryImportModal } from './inventory-import-modal'
 
 const STATUS_BADGE = {
   in:  { tone: 'success', label: 'In Stock' },
@@ -219,12 +220,14 @@ export function Inventory({
   prefillKey?: number
   onPrefillConsumed?: () => void
 } = {}) {
-  const { user } = useAuth()
   const toast = useToast()
-  const [products, setProducts] = useState<Product[]>([])
-  const [categories, setCategories] = useState<ApiCategory[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const invalidateCatalog = useInvalidateCatalog()
+  const productsQuery = useProductsQuery()
+  const categoriesQuery = useCategoriesQuery()
+  const products = productsQuery.data ?? []
+  const categories = categoriesQuery.data ?? []
+  const loading = productsQuery.isPending || categoriesQuery.isPending
+  const error = productsQuery.error?.message ?? categoriesQuery.error?.message ?? null
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
   const [unit, setUnit] = useState('all')
@@ -235,27 +238,14 @@ export function Inventory({
   const [adjust, setAdjust] = useState<Product | null>(null)
   const [history, setHistory] = useState<Product | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const PER = 12
 
-  async function loadData() {
-    setLoading(true)
-    setError(null)
-    try {
-      const [prods, cats] = await Promise.all([fetchProducts(), fetchCategories()])
-      setProducts(prods)
-      setCategories(cats)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load products')
-    } finally {
-      setLoading(false)
-    }
+  function refetch() {
+    void productsQuery.refetch()
+    void categoriesQuery.refetch()
   }
-
-  useEffect(() => {
-    if (!user) return
-    loadData()
-  }, [user])
 
   useEffect(() => {
     if (!prefillQuery || prefillKey == null) return
@@ -309,9 +299,9 @@ export function Inventory({
     if (!adjust) return
     const target = adjust
     try {
-      const updated = await adjustStock(target.id, delta, reason, notes)
-      setProducts(ps => ps.map(p => p.id === updated.id ? updated : p))
-      setHistory(h => (h?.id === updated.id ? updated : h))
+      await adjustStock(target.id, delta, reason, notes)
+      await invalidateCatalog.products()
+      setHistory(h => (h?.id === target.id ? { ...h, stock: Math.max(0, h.stock + delta) } : h))
       setAdjust(null)
       toast(`${delta > 0 ? '+' : ''}${delta} ${target.unit} · ${target.name}`, { icon: 'package-check' })
     } catch (e) {
@@ -322,8 +312,8 @@ export function Inventory({
 
   async function doAddProduct(f: ProductFormData) {
     try {
-      const p = await createProduct(f)
-      setProducts(ps => [p, ...ps])
+      await createProduct(f)
+      await invalidateCatalog.all()
       setAddOpen(false)
       toast('Product created · ' + f.name, { icon: 'package-check' })
     } catch {
@@ -334,8 +324,8 @@ export function Inventory({
   async function doUpdateProduct(f: ProductFormData) {
     if (!editProduct) return
     try {
-      const p = await updateProduct(editProduct.id, f)
-      setProducts(ps => ps.map(prod => prod.id === p.id ? p : prod))
+      await updateProduct(editProduct.id, f)
+      await invalidateCatalog.products()
       setEditProduct(null)
       toast('Product updated · ' + f.name, { icon: 'package-check' })
     } catch {
@@ -351,6 +341,7 @@ export function Inventory({
           <div className="section-sub">{products.length} products · {categories.length} categories</div>
         </div>
         <div className="row gap8">
+          <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>
           <Button size="sm" icon="download" onClick={() => toast(`Exported ${rows.length} rows to CSV`, { icon: 'file-down' })}>Export</Button>
           <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>
         </div>
@@ -370,7 +361,7 @@ export function Inventory({
       )}
 
       <Card noBody>
-        <div style={{ padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+        <div className="filter-toolbar">
           <div className="input sm" style={{ width: 260 }}>
             <Icon name="search" size={14} />
             <input value={q} onChange={e => { setQ(e.target.value); setPage(0) }} placeholder="Search name, SKU or barcode" />
@@ -419,7 +410,7 @@ export function Inventory({
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0' }}>
                     <div style={{ color: 'var(--danger-fg)', marginBottom: 10, fontSize: 13 }}>{error}</div>
-                    <Button size="sm" variant="outline" icon="refresh-cw" onClick={loadData}>Retry</Button>
+                    <Button size="sm" variant="outline" icon="refresh-cw" onClick={refetch}>Retry</Button>
                   </td>
                 </tr>
               ) : pageRows.length === 0 ? (
@@ -480,6 +471,12 @@ export function Inventory({
       {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
       {addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
       {editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}
+      {importOpen && (
+        <InventoryImportModal
+          onClose={() => setImportOpen(false)}
+          onComplete={() => { void invalidateCatalog.products(); toast('Bulk import complete', { icon: 'package-check' }) }}
+        />
+      )}
     </div>
   )
 }

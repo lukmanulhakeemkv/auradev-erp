@@ -10,6 +10,7 @@ import {
   type AuthUser,
   type LoginResponse,
 } from './api'
+import { queryClient } from './query-client'
 
 interface AuthState {
   user: AuthUser | null
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await apiLogout()
+    queryClient.clear()
     setUser(null)
   }, [])
 
