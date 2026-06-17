@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Icon } from './ui'
 import { Avatar } from './ui'
 import { useAuth } from '@/lib/auth-context'
+import { MercantileMark } from '@/components/brand/MercantileMark'
 
 export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'settings'
 
@@ -50,15 +51,10 @@ export function Sidebar({
     <aside className={'sidebar' + (collapsed ? ' collapsed' : '')}>
       <div className="sb-brand">
         <div className="sb-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m3 7 9-4 9 4-9 4-9-4Z" />
-            <path d="m3 7 9 4v10" />
-            <path d="m21 7-9 4" opacity=".55" />
-          </svg>
+          <MercantileMark height={16} />
         </div>
         <div className="sb-brand-text">
-          <span className="nm">AuraDev</span>
-          <span className="sub">Commerce ERP</span>
+          <span className="nm font-brand">Mercantile</span>
         </div>
       </div>
 

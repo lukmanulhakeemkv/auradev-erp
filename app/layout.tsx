@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+import { Inter, JetBrains_Mono, Comfortaa } from 'next/font/google'
 import { AuthProvider } from '@/lib/auth-context'
 import { QueryProvider } from '@/lib/query-provider'
 import './globals.css'
@@ -16,16 +16,22 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ['400', '500', '600'],
 })
 
+const comfortaa = Comfortaa({
+  variable: '--font-brand',
+  subsets: ['latin'],
+  weight: ['700'],
+})
+
 export const metadata: Metadata = {
-  title: 'AuraDev Commerce ERP',
-  description: 'AuraDev Commerce ERP — Retail & Wholesale SaaS · Nenjankod Supermarket',
+  title: 'Mercantile',
+  description: 'Mercantile — Retail & Wholesale SaaS · Nenjankod Supermarket',
 }
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} h-full`}>
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} ${comfortaa.variable} h-full`}>
       <body className="h-full antialiased">
           <QueryProvider>
             <AuthProvider>{children}</AuthProvider>

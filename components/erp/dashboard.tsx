@@ -791,7 +791,7 @@ export function Dashboard({
       <div className="ai-banner">
         <div className="ai-ic"><Icon name="sparkles" size={18} /></div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 650, fontSize: 13.5, color: 'var(--primary-soft-fg)' }}>AuraDev AI · Daily brief</div>
+          <div style={{ fontWeight: 650, fontSize: 13.5, color: 'var(--primary-soft-fg)' }}>Tyga · Daily brief</div>
           <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 2 }}>{d.aiBrief}</div>
           {lowStock.length > 0 && (
             <div className="row gap8" style={{ marginTop: 9, flexWrap: 'wrap' }}>

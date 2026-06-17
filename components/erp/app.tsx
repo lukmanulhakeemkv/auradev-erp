@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ToastProvider, useToast } from './ui'
 import { Sidebar, Topbar, type ViewId } from './shell'
 import { GlobalSearch, type GlobalSearchSelect } from './global-search'
@@ -12,6 +12,7 @@ import { Bills } from './bills'
 import { Settings } from './settings'
 import { LoginScreen } from './login'
 import { useAuth } from '@/lib/auth-context'
+import { MercantileMark } from '@/components/brand/MercantileMark'
 
 function AppInner() {
   const toast = useToast()
@@ -125,6 +126,21 @@ function AppInner() {
 
 export function ERPApp() {
   const { user, isLoading } = useAuth()
+  const [loggingIn, setLoggingIn] = useState(false)
+  const confirmedLoggedOut = useRef(false)
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      confirmedLoggedOut.current = true
+      return
+    }
+    if (confirmedLoggedOut.current && user) {
+      confirmedLoggedOut.current = false
+      setLoggingIn(true)
+      const t = setTimeout(() => setLoggingIn(false), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [isLoading, user])
 
   if (isLoading) {
     return (
@@ -135,6 +151,20 @@ export function ERPApp() {
             <path d="m3 7 9 4v10"/>
             <path d="m21 7-9 4" opacity=".55"/>
           </svg>
+        </div>
+      </div>
+    )
+  }
+
+  if (loggingIn) {
+    return (
+      <div className="auth-loader">
+        <div className="al-stage">
+          <div className="al-icon">
+            <MercantileMark height={51} />
+          </div>
+          <div className="al-nm">Mercantile</div>
+          <div className="al-bar"><span /></div>
         </div>
       </div>
     )

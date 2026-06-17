@@ -3,6 +3,7 @@
 import { useState, type FormEvent, useEffect } from 'react'
 import { useAuth } from '@/lib/auth-context'
 import { ApiError } from '@/lib/api'
+import { MercantileMark } from '@/components/brand/MercantileMark'
 
 // ── Icons (inline SVG to avoid Lucide dep in login path) ──────────────────────
 function IcoMail() {
@@ -28,9 +29,6 @@ function IcoArrowRight() {
 }
 function IcoLoader() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-}
-function IcoCheck() {
-  return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
 }
 function IcoScanLine() {
   return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" x2="7" y1="12" y2="12"/><line x1="17" x2="17" y1="12" y2="12"/><line x1="12" x2="12" y1="12" y2="12"/></svg>
@@ -117,8 +115,6 @@ export function LoginScreen() {
   const [errors, setErrors] = useState<{ email?: string; pwd?: string }>({})
   const [apiError, setApiError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [done, setDone] = useState(false)
-  const [userName, setUserName] = useState('')
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -140,9 +136,7 @@ export function LoginScreen() {
     if (!validate()) return
     setLoading(true)
     try {
-      const data = await login(email, pwd)
-      setUserName(data.user.name)
-      setDone(true)
+      await login(email, pwd)
     } catch (err) {
       setApiError(err instanceof ApiError ? err.message : 'Invalid email or password')
     } finally {
@@ -161,20 +155,15 @@ export function LoginScreen() {
       <div className="auth-brand">
         <div className="auth-logo">
           <div className="mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m3 7 9-4 9 4-9 4-9-4Z"/>
-              <path d="m3 7 9 4v10"/>
-              <path d="m21 7-9 4" opacity=".55"/>
-            </svg>
+            <MercantileMark height={22} />
           </div>
           <div>
-            <div className="nm">AuraDev</div>
-            <div className="sub">Commerce ERP</div>
+            <div className="nm font-brand">Mercantile</div>
           </div>
         </div>
 
         <div className="auth-hero">
-          <h1>Run your store,&nbsp;end&#8209;to&#8209;end.</h1>
+          <h1 className="font-brand">Run your store,&nbsp;end&#8209;to&#8209;end.</h1>
           <p>Billing, inventory, purchases and insights — one fast, AI&#8209;native workspace built for modern Indian retail.</p>
           <div className="auth-points">
             <div className="auth-point">
@@ -187,13 +176,13 @@ export function LoginScreen() {
             </div>
             <div className="auth-point">
               <span className="pic"><IcoSparkles /></span>
-              Daily AI brief on what needs attention
+              Tyga surfaces what needs your attention today
             </div>
           </div>
         </div>
 
         <div className="auth-foot">
-          <span>© 2026 AuraDev Technologies</span>
+          <span>© 2026 AuraDev</span>
           <span className="stat">
             <span className="live-dot" />
             All systems operational
@@ -210,87 +199,75 @@ export function LoginScreen() {
         </div>
 
         <div className="auth-card">
-          {done ? (
-            <div className="auth-success">
-              <div className="check-ring"><IcoCheck /></div>
-              <h2 style={{ fontSize: 22, fontWeight: 700 }}>You&apos;re signed in</h2>
-              <p style={{ marginTop: 8, fontSize: 14, color: 'var(--fg-muted)' }}>
-                Welcome back, {userName}. Redirecting to your dashboard…
-              </p>
+          <div className="auth-head">
+            <h2>Welcome back</h2>
+            <p>Sign in to Nenjankod Supermarket&apos;s workspace.</p>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {apiError && (
+              <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-fg)', borderRadius: 'var(--r-md)', padding: '10px 14px', fontSize: 13 }}>
+                {apiError}
+              </div>
+            )}
+
+            <div className="field">
+              <label>Work email</label>
+              <div className={'input' + (errors.email ? ' error' : '')}>
+                <IcoMail />
+                <input
+                  type="email"
+                  value={email}
+                  placeholder="you@store.in"
+                  autoComplete="username"
+                  onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') submit() }}
+                  autoFocus
+                />
+              </div>
+              {errors.email && <span className="err">{errors.email}</span>}
             </div>
-          ) : (
-            <>
-              <div className="auth-head">
-                <h2>Welcome back</h2>
-                <p>Sign in to Nenjankod Supermarket&apos;s workspace.</p>
-              </div>
 
-              <form className="auth-form" onSubmit={handleSubmit}>
-                {apiError && (
-                  <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-fg)', borderRadius: 'var(--r-md)', padding: '10px 14px', fontSize: 13 }}>
-                    {apiError}
-                  </div>
-                )}
+            <div className="field">
+              <label>Password</label>
+              <PasswordInput value={pwd} onChange={setPwd} error={errors.pwd} placeholder="Enter your password" onEnter={submit} />
+              {errors.pwd && <span className="err">{errors.pwd}</span>}
+            </div>
 
-                <div className="field">
-                  <label>Work email</label>
-                  <div className={'input' + (errors.email ? ' error' : '')}>
-                    <IcoMail />
-                    <input
-                      type="email"
-                      value={email}
-                      placeholder="you@store.in"
-                      autoComplete="username"
-                      onChange={e => setEmail(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') submit() }}
-                      autoFocus
-                    />
-                  </div>
-                  {errors.email && <span className="err">{errors.email}</span>}
-                </div>
+            <div className="auth-row">
+              <label className="remember" onClick={() => setRemember(r => !r)}>
+                <Checkbox checked={remember} onChange={setRemember} />
+                Keep me signed in
+              </label>
+              <span className="auth-link">Forgot password?</span>
+            </div>
 
-                <div className="field">
-                  <label>Password</label>
-                  <PasswordInput value={pwd} onChange={setPwd} error={errors.pwd} placeholder="Enter your password" onEnter={submit} />
-                  {errors.pwd && <span className="err">{errors.pwd}</span>}
-                </div>
+            <button type="submit" className="btn primary block lg" disabled={loading} style={{ height: 44, justifyContent: 'center' }}>
+              {loading
+                ? <><IcoLoader />Signing in…</>
+                : <>Sign in<IcoArrowRight /></>}
+            </button>
 
-                <div className="auth-row">
-                  <label className="remember" onClick={() => setRemember(r => !r)}>
-                    <Checkbox checked={remember} onChange={setRemember} />
-                    Keep me signed in
-                  </label>
-                  <span className="auth-link">Forgot password?</span>
-                </div>
+            <div className="auth-or">or continue with</div>
 
-                <button type="submit" className="btn primary block lg" disabled={loading} style={{ height: 44, justifyContent: 'center' }}>
-                  {loading
-                    ? <><IcoLoader />Signing in…</>
-                    : <>Sign in<IcoArrowRight /></>}
-                </button>
+            <div className="sso-row">
+              <button type="button" className="btn outline" style={{ height: 42, justifyContent: 'center' }}>
+                <GoogleLogo />Google
+              </button>
+              <button type="button" className="btn outline" style={{ height: 42, justifyContent: 'center' }}>
+                <IcoBuilding />SSO
+              </button>
+            </div>
+          </form>
 
-                <div className="auth-or">or continue with</div>
+          <div className="auth-hint">
+            <IcoInfo />
+            <span><b>Credentials:</b> use <b>admin@nenjankod.in</b> with your set password.</span>
+          </div>
 
-                <div className="sso-row">
-                  <button type="button" className="btn outline" style={{ height: 42, justifyContent: 'center' }}>
-                    <GoogleLogo />Google
-                  </button>
-                  <button type="button" className="btn outline" style={{ height: 42, justifyContent: 'center' }}>
-                    <IcoBuilding />SSO
-                  </button>
-                </div>
-              </form>
-
-              <div className="auth-hint">
-                <IcoInfo />
-                <span><b>Credentials:</b> use <b>admin@nenjankod.in</b> with your set password.</span>
-              </div>
-
-              <div className="auth-switch">
-                New to AuraDev? <span className="auth-link">Request access</span>
-              </div>
-            </>
-          )}
+          <div className="auth-switch">
+            New to Mercantile? <span className="auth-link">Request access</span>
+          </div>
         </div>
 
         <div className="auth-legal">
