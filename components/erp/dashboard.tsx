@@ -706,7 +706,7 @@ export function Dashboard({
             </>
         </div>
         ) : (
-          <ContentLoader label="Loading dashboard…" />
+          <ContentLoader />
         )}
       </div>
     )
@@ -769,8 +769,8 @@ export function Dashboard({
       <DashboardFiltersBar filters={filters} onChange={setFilters} />
 
       {filters.preset === 'custom' && !customRangeReady && (
-        <div className="alert-banner">
-          <Icon name="calendar" size={18} />
+        <div className="alert-banner info">
+          <Icon name="calendar" size={16} />
           <span>Pick both start and end dates for a custom range.</span>
         </div>
       )}
@@ -784,8 +784,8 @@ export function Dashboard({
 
       <div className={metricsFetching ? 'dash-metrics-dim' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {error && (
-        <div className="alert-banner" style={{ borderColor: 'color-mix(in oklab, var(--danger) 35%, transparent)' }}>
-          <Icon name="alert-circle" size={18} />
+        <div className="alert-banner danger">
+          <Icon name="alert-circle" size={16} />
           <span>{error}</span>
           <div style={{ flex: 1 }} />
           <Button size="sm" variant="outline" onClick={() => void refetch()}>Retry</Button>

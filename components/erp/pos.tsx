@@ -166,7 +166,7 @@ function PaymentModal({ total, customer, allowCreditSales, onClose, onDone, busy
           </div>
         ) : (
           <div className="alert-banner">
-            <Icon name="alert-triangle" size={18} />Credit sale requires a registered customer. Select one from the cart panel.
+            <Icon name="alert-triangle" size={16} />Credit sale requires a registered customer. Select one from the cart panel.
           </div>
         )
       )}

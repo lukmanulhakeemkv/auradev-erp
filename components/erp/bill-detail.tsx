@@ -51,7 +51,9 @@ export function BillDetailDrawer({
   return (
     <Drawer title={title} sub={sub} onClose={onClose}>
       {loading && !bill ? (
-        <ContentLoader label="Loading bill…" compact />
+        <div className="empty" style={{ padding: '40px 0' }}>
+          <Icon name="loader" size={22} />
+        </div>
       ) : error ? (
         <div className="empty" style={{ padding: '40px 0' }}>
           <div className="ei"><Icon name="alert-circle" size={22} /></div>

@@ -378,7 +378,7 @@ export function Inventory({
 
       {lowCount > 0 && (
         <div className="alert-banner">
-          <Icon name="alert-triangle" size={18} />
+          <Icon name="alert-triangle" size={16} />
           <span><b>{lowCount} products</b> are at or below reorder level. Review and raise purchase orders to avoid stockouts.</span>
           <div style={{ flex: 1 }} />
           <button
@@ -391,7 +391,7 @@ export function Inventory({
 
       <Card noBody>
         {initialLoading ? (
-          <ContentLoader label="Loading inventory…" />
+          <ContentLoader />
         ) : (
         <>
         <div className="filter-toolbar">

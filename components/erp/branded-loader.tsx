@@ -16,22 +16,12 @@ export function MercantileLoaderStage() {
 }
 
 /** In-page loader for tables, cards, drawers */
-export function ContentLoader({
-  label = 'Loading…',
-  compact = false,
-}: {
-  label?: string
-  compact?: boolean
-}) {
+export function ContentLoader({ compact = false }: { compact?: boolean }) {
   const markH = compact ? 28 : 34
   return (
     <div className={'content-loader-wrap' + (compact ? ' compact' : '')}>
-      <div className={'content-loader' + (compact ? ' compact' : '')}>
-        <div className="cl-icon">
-          <MercantileMark height={markH} />
-        </div>
-        <p className="cl-label">{label}</p>
-        <div className="cl-bar" aria-hidden="true"><span /></div>
+      <div className="cl-icon">
+        <MercantileMark height={markH} />
       </div>
     </div>
   )

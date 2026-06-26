@@ -50,7 +50,6 @@ export function PurchaseDetailDrawer({
       {loading && !purchase ? (
         <div className="empty" style={{ padding: '40px 0' }}>
           <Icon name="loader" size={22} />
-          <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading purchase…</div>
         </div>
       ) : error ? (
         <div className="empty" style={{ padding: '40px 0' }}>

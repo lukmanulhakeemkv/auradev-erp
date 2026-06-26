@@ -80,7 +80,7 @@ export function Bills({
 
       <Card title="Bill history" sub={initialLoading ? 'Loading…' : `${total} completed bill${total === 1 ? '' : 's'}`} noBody>
         {initialLoading ? (
-          <ContentLoader label="Loading bills…" />
+          <ContentLoader />
         ) : (
         <div className="tbl-wrap">
           <table className="tbl tbl-clickable">

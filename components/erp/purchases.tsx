@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Icon, Button, Badge, KpiCard, Card, Select, TextInput, IconTile, useToast } from './ui'
+import { Icon, Button, Badge, KpiCard, Card, Select, TextInput, IconTile, ContentLoader, useToast } from './ui'
 import { money } from '@/lib/erp-data'
 import {
   STATUS_FILTERS,
@@ -87,6 +87,7 @@ export function Purchases({
   const detailQuery = usePurchaseQuery(selectedId)
 
   const rows = purchasesQuery.data?.items ?? []
+  const initialLoading = purchasesQuery.isLoading && rows.length === 0
   const totalPages = purchasesQuery.data?.totalPages ?? 1
   const total = purchasesQuery.data?.totalElements ?? rows.length
 
@@ -191,6 +192,10 @@ export function Purchases({
         />
       ) : (
       <Card noBody>
+        {initialLoading ? (
+          <ContentLoader />
+        ) : (
+        <>
         <div className="filter-toolbar">
           <div style={{ width: 260 }}>
             <TextInput
@@ -241,13 +246,7 @@ export function Purchases({
               </tr>
             </thead>
             <tbody>
-              {purchasesQuery.isLoading && rows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Icon name="loader" size={20} />
-                  </td>
-                </tr>
-              ) : purchasesQuery.error ? (
+              {purchasesQuery.error ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--danger-fg)' }}>
                     {purchasesQuery.error.message}
@@ -291,6 +290,8 @@ export function Purchases({
             </div>
           )}
         </div>
+        </>
+        )}
       </Card>
       )}
 

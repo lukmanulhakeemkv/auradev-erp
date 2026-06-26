@@ -91,7 +91,7 @@ export function SupplierFormModal({
       }
     >
       {error && (
-        <div className="alert-banner" style={{ marginBottom: 14 }}>
+        <div className="alert-banner danger" style={{ marginBottom: 14 }}>
           <Icon name="alert-circle" size={16} />
           <span>{error}</span>
         </div>

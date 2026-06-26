@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '@/lib/auth-context'
-import { ApiError } from '@/lib/api'
 import { MercantileMark } from '@/components/brand/MercantileMark'
 import { useTheme } from '@/lib/theme'
 
@@ -134,7 +133,7 @@ export function LoginScreen() {
     try {
       await login(email, pwd)
     } catch (err) {
-      setApiError(err instanceof ApiError ? err.message : 'Invalid email or password')
+      setApiError('Invalid email or password')
     } finally {
       setLoading(false)
     }
@@ -195,14 +194,24 @@ export function LoginScreen() {
         </div>
 
         <div className="auth-card">
-          <div className="auth-head">
-            <h2>Welcome back</h2>
-            <p>Sign in to Nenjankod Supermarket&apos;s workspace.</p>
+          <div className="auth-card-logo">
+            <svg width="120" height="65" viewBox="0 0 306 166" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
+              <path d="M289.5 66.4999C290.741 98.9986 281.4 154 195 154L163.5 154.502L144.043 123C183.5 137.498 224 123 224 123C268 105.998 264 38.4977 224 25.9977L183.5 18.5C143 11.0023 131 1 131 1H224C274.4 1 288.667 44.6666 289.5 66.4999Z" fill="currentColor"/>
+              <path d="M28 123L9 152.5H35.5L53.5 123H28Z" fill="currentColor"/>
+              <path d="M65 59.5L47.5 89.5L101 118.5L65 59.5Z" fill="currentColor"/>
+              <path d="M101 1L84.5 29L163 154H195.5L101 1Z" fill="currentColor"/>
+              <path d="M0 152.5L16 145L11.5 152.5H0Z" fill="currentColor"/>
+            </svg>
           </div>
 
-          <form className="auth-form" onSubmit={handleSubmit}>
+          <div className="auth-head">
+            <h2>Welcome back</h2>
+            <p>Sign in to your workspace.</p>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit} noValidate>
             {apiError && (
-              <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-fg)', borderRadius: 'var(--r-md)', padding: '10px 14px', fontSize: 13 }}>
+              <div className="alert-banner danger">
                 {apiError}
               </div>
             )}
@@ -244,6 +253,7 @@ export function LoginScreen() {
                 : <>Sign in<IcoArrowRight /></>}
             </button>
 
+            {/* SSO / OAuth — not yet configured; restore when ready
             <div className="auth-or">or continue with</div>
 
             <div className="sso-row">
@@ -254,6 +264,7 @@ export function LoginScreen() {
                 <IcoBuilding />SSO
               </button>
             </div>
+            */}
           </form>
 
           <div className="auth-hint">

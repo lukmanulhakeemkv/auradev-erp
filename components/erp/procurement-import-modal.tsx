@@ -209,7 +209,7 @@ export function ProcurementImportModal({
           </label>
 
           {error && (
-            <div className="alert-banner" style={{ margin: 0, background: 'var(--danger-soft)', color: 'var(--danger-fg)' }}>
+            <div className="alert-banner danger" style={{ margin: 0 }}>
               <Icon name="alert-circle" size={16} />
               <span>{error}</span>
             </div>
